@@ -11,7 +11,7 @@ use super::context::Context;
 use super::error::{Error, GraphQLError, QueryError, Result};
 use super::schema::{Type, TypeKind};
 
-pub async fn query_root_selections<'a>(
+pub async fn query<'a>(
     ctx: &'a Context<'a>,
     object_type: &'a Type,
     selections: Vec<Selection<'a, String>>,
@@ -154,7 +154,7 @@ pub async fn query_root_selections<'a>(
     Ok(map.into())
 }
 
-pub async fn query_node_selections<'a>(
+pub async fn query_node<'a>(
     ctx: &'a Context<'a>,
     object_type: &'a Type,
     selections: Vec<Selection<'a, String>>,
@@ -454,35 +454,6 @@ pub async fn query_node_selections<'a>(
         _ => Ok(data.clone()),
     }
 }
-/*
-async fn execute_wrapper(
-    executor: &dyn Executor,
-    query: String,
-    variables: Option<Value>,
-    operation_name: Option<String>,
-) -> Result<Map<String, Value>> {
-    let payload = &Payload {
-        query,
-        variables,
-        operation_name,
-    };
-
-    let res = executor.execute(payload).await?;
-
-    if res.get("errors").is_some() {
-        return Err(Error::Executor(res));
-    }
-
-    let data = match res.get("data") {
-        Some(data) => data,
-        _ => return Err(Error::InvalidExecutorResponse),
-    };
-
-    match data {
-        Value::Object(values) => Ok(values.clone()),
-        _ => Err(Error::InvalidExecutorResponse),
-    }
-} */
 
 fn resolve_executors<'a>(
     ctx: &'a Context<'a>,
@@ -857,8 +828,7 @@ pub fn resolve<'a>(
             _ => return Err(Error::Custom("object_type name must be define".to_owned())),
         };
 
-        let data =
-            query_node_selections(ctx, object_type, selections.clone(), data.clone()).await?;
+        let data = query_node(ctx, object_type, selections.clone(), data.clone()).await?;
 
         if let Value::Array(values) = &data {
             if values.len() == 0 {

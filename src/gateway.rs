@@ -46,15 +46,13 @@ impl<'a> Gateway<'a> {
                 Definition::Operation(operation) => match operation {
                     OperationDefinition::Query(ast_query) => {
                         let ctx = &Context::new(&self, payload, &query, ast_query.variable_definitions.clone());
-
                         let object_type = match ctx.object_type("Query") {
                             Some(object_type) => object_type,
                             _ => {
                                 return Err(Error::Custom("Schema must have Query type".to_owned()))
                             }
                         };
-
-                        let data = query::query_root_selections(
+                        let data = query::query(
                             ctx,
                             object_type,
                             ast_query.selection_set.items.clone(),
@@ -81,10 +79,8 @@ impl<'a> Gateway<'a> {
                                 return Err(Error::Query(vec![err]));
                             }
                         };
-
                         let mutation = mutation.clone();
-
-                        let root_data = query::query_root_selections(
+                        let root_data = query::query(
                             ctx,
                             object_type,
                             mutation.selection_set.items.clone(),
