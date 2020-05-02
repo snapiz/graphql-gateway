@@ -7,8 +7,7 @@ use super::context::Context;
 use super::error::{Error, GraphQLError, QueryError, Result};
 use super::executor::Executor;
 use super::graphql::Payload;
-use super::query::query_root_selections;
-use super::resolver;
+use super::query;
 use super::schema;
 use super::schema::{Field, Schema, Type};
 
@@ -55,14 +54,14 @@ impl<'a> Gateway<'a> {
                             }
                         };
 
-                        let data = query_root_selections(
+                        let data = query::query_root_selections(
                             ctx,
                             object_type,
                             ast_query.selection_set.items.clone(),
                         )
                         .await?;
 
-                        return resolver::resolve_selections(
+                        return query::resolve(
                             ctx,
                             object_type,
                             ast_query.selection_set.items.clone(),
@@ -85,14 +84,14 @@ impl<'a> Gateway<'a> {
 
                         let mutation = mutation.clone();
 
-                        let root_data = query_root_selections(
+                        let root_data = query::query_root_selections(
                             ctx,
                             object_type,
                             mutation.selection_set.items.clone(),
                         )
                         .await?;
 
-                        return resolver::resolve_selections(
+                        return query::resolve(
                             ctx,
                             object_type,
                             mutation.selection_set.items,

@@ -4,7 +4,7 @@ use serde_json::Value;
 
 use super::error::{Error, Result};
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Payload {
     pub query: String,
     #[serde(rename = "operationName")]

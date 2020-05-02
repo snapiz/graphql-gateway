@@ -10,7 +10,6 @@ mod executor;
 mod gateway;
 mod graphql;
 mod query;
-mod resolver;
 mod schema;
 
 pub mod context;

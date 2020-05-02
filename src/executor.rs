@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use serde_json::Value;
+use serde_json::{Map, Value};
 
 use super::error::{Error, Result};
 use super::graphql::Payload;
@@ -112,6 +112,35 @@ pub trait Executor: Send + Sync {
   fn name(&self) -> String;
 
   async fn execute(&self, payload: &Payload) -> Result<Value>;
+
+  async fn get_data(
+    &self,
+    query: String,
+    variables: Option<Value>,
+    operation_name: Option<String>,
+  ) -> Result<Map<String, Value>> {
+    let payload = &Payload {
+      query,
+      variables,
+      operation_name,
+    };
+
+    let res = self.execute(payload).await?;
+
+    if res.get("errors").is_some() {
+      return Err(Error::Executor(res));
+    }
+
+    let data = match res.get("data") {
+      Some(data) => data,
+      _ => return Err(Error::InvalidExecutorResponse),
+    };
+
+    match data {
+      Value::Object(values) => Ok(values.clone()),
+      _ => Err(Error::InvalidExecutorResponse),
+    }
+  }
 
   async fn get_schema(&self) -> Result<Schema> {
     let res = self
