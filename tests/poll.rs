@@ -2,7 +2,7 @@ mod common;
 
 use common::{account, inventory, inventory_updated, product, review};
 use futures_await_test::async_test;
-use gql_gateway::{Payload, Response};
+use graphql_gateway::{Payload, Response};
 use serde_json::json;
 
 #[async_test]
@@ -13,7 +13,7 @@ async fn poll() {
     let product = product::EXECUTOR.clone();
     let review = review::EXECUTOR.clone();
 
-    let mut gateway = gql_gateway::from_executors(vec![&account, &inventory, &product, &review])
+    let mut gateway = graphql_gateway::from_executors(vec![&account, &inventory, &product, &review])
         .await
         .unwrap();
 

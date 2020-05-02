@@ -2,7 +2,7 @@ use async_graphql::http::GQLResponse;
 use async_graphql::{ObjectType, Schema, SubscriptionType, Variables, ID, QueryBuilder};
 use async_trait::async_trait;
 use base64::DecodeError;
-use gql_gateway::{Executor, Payload};
+use graphql_gateway::{Executor, Payload};
 use serde_json::Value;
 use std::convert::From;
 use std::num::ParseIntError;
@@ -93,7 +93,7 @@ where
         self.0.to_owned()
     }
 
-    async fn execute(&self, payload: &Payload) -> gql_gateway::Result<Value> {
+    async fn execute(&self, payload: &Payload) -> graphql_gateway::Result<Value> {
         let mut builder = QueryBuilder::new(&payload.query);
 
         if let Some(operation_name) = &payload.operation_name {

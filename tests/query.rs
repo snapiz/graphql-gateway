@@ -2,7 +2,7 @@ mod common;
 
 use common::{account, inventory, product, review};
 use futures_await_test::async_test;
-use gql_gateway::Payload;
+use graphql_gateway::Payload;
 use serde_json::json;
 
 #[async_test]
@@ -12,7 +12,7 @@ async fn query_executor() {
     let product = product::EXECUTOR.clone();
     let review = review::EXECUTOR.clone();
 
-    let gateway = gql_gateway::from_executors(vec![&account, &inventory, &product, &review])
+    let gateway = graphql_gateway::from_executors(vec![&account, &inventory, &product, &review])
         .await
         .unwrap();
 
@@ -49,7 +49,7 @@ async fn query_executors() {
     let product = product::EXECUTOR.clone();
     let review = review::EXECUTOR.clone();
 
-    let gateway = gql_gateway::from_executors(vec![&account, &inventory, &product, &review])
+    let gateway = graphql_gateway::from_executors(vec![&account, &inventory, &product, &review])
         .await
         .unwrap();
 
@@ -126,7 +126,7 @@ async fn query_batch() {
     let product = product::EXECUTOR.clone();
     let review = review::EXECUTOR.clone();
 
-    let gateway = gql_gateway::from_executors(vec![&account, &inventory, &product, &review])
+    let gateway = graphql_gateway::from_executors(vec![&account, &inventory, &product, &review])
         .await
         .unwrap();
 
@@ -213,7 +213,7 @@ async fn query_node() {
     let product = product::EXECUTOR.clone();
     let review = review::EXECUTOR.clone();
 
-    let gateway = gql_gateway::from_executors(vec![&account, &inventory, &product, &review])
+    let gateway = graphql_gateway::from_executors(vec![&account, &inventory, &product, &review])
         .await
         .unwrap();
 
@@ -284,7 +284,7 @@ async fn query_nodes_batch() {
     let product = product::EXECUTOR.clone();
     let review = review::EXECUTOR.clone();
 
-    let gateway = gql_gateway::from_executors(vec![&account, &inventory, &product, &review])
+    let gateway = graphql_gateway::from_executors(vec![&account, &inventory, &product, &review])
         .await
         .unwrap();
 
@@ -355,7 +355,7 @@ async fn query_nodes() {
     let product = product::EXECUTOR.clone();
     let review = review::EXECUTOR.clone();
 
-    let gateway = gql_gateway::from_executors(vec![&account, &inventory, &product, &review])
+    let gateway = graphql_gateway::from_executors(vec![&account, &inventory, &product, &review])
         .await
         .unwrap();
 
@@ -406,7 +406,7 @@ async fn query_alias() {
     let product = product::EXECUTOR.clone();
     let review = review::EXECUTOR.clone();
 
-    let gateway = gql_gateway::from_executors(vec![&account, &inventory, &product, &review])
+    let gateway = graphql_gateway::from_executors(vec![&account, &inventory, &product, &review])
         .await
         .unwrap();
 
@@ -499,7 +499,7 @@ async fn query_variables() {
     let product = product::EXECUTOR.clone();
     let review = review::EXECUTOR.clone();
 
-    let gateway = gql_gateway::from_executors(vec![&account, &inventory, &product, &review])
+    let gateway = graphql_gateway::from_executors(vec![&account, &inventory, &product, &review])
         .await
         .unwrap();
 
@@ -599,7 +599,7 @@ async fn query_fragment_spread() {
     let product = product::EXECUTOR.clone();
     let review = review::EXECUTOR.clone();
 
-    let gateway = gql_gateway::from_executors(vec![&account, &inventory, &product, &review])
+    let gateway = graphql_gateway::from_executors(vec![&account, &inventory, &product, &review])
         .await
         .unwrap();
 

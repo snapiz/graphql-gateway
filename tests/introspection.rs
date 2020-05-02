@@ -2,7 +2,7 @@ mod common;
 
 use common::{account, inventory, product, review};
 use futures_await_test::async_test;
-use gql_gateway::{Payload, Schema, TypeKind};
+use graphql_gateway::{Payload, Schema, TypeKind};
 use serde_json::{json, Value};
 
 #[async_test]
@@ -12,11 +12,11 @@ async fn introspection() {
     let product = product::EXECUTOR.clone();
     let review = review::EXECUTOR.clone();
 
-    let res = gql_gateway::from_executors(vec![&account, &inventory, &product, &review])
+    let res = graphql_gateway::from_executors(vec![&account, &inventory, &product, &review])
         .await
         .unwrap()
         .execute(&Payload {
-            query: gql_gateway::INTROSPECTION_QUERY.to_owned(),
+            query: graphql_gateway::INTROSPECTION_QUERY.to_owned(),
             operation_name: Some("IntrospectionQuery".to_owned()),
             variables: None,
         })

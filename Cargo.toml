@@ -1,5 +1,5 @@
 [package]
-name = "gql-gateway"
+name = "graphql-gateway"
 version = "0.1.0"
 authors = ["Jonathan <jonathan@timada.co>"]
 edition = "2018"

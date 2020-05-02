@@ -2,7 +2,7 @@ mod common;
 
 use common::{account, product, review};
 use futures_await_test::async_test;
-use gql_gateway::{Error, Payload, Response};
+use graphql_gateway::{Error, Payload, Response};
 use serde_json::json;
 
 #[async_test]
@@ -11,7 +11,7 @@ async fn error_not_supported() {
     let product = product::EXECUTOR.clone();
     let review = review::EXECUTOR.clone();
 
-    let gateway = gql_gateway::from_executors(vec![&account, &product, &review])
+    let gateway = graphql_gateway::from_executors(vec![&account, &product, &review])
         .await
         .unwrap();
 
@@ -47,7 +47,7 @@ async fn error_field_not_found() {
     let product = product::EXECUTOR.clone();
     let review = review::EXECUTOR.clone();
 
-    let gateway = gql_gateway::from_executors(vec![&account, &product, &review])
+    let gateway = graphql_gateway::from_executors(vec![&account, &product, &review])
         .await
         .unwrap();
 
@@ -84,7 +84,7 @@ async fn error_unknown_fragment() {
     let product = product::EXECUTOR.clone();
     let review = review::EXECUTOR.clone();
 
-    let gateway = gql_gateway::from_executors(vec![&account, &product, &review])
+    let gateway = graphql_gateway::from_executors(vec![&account, &product, &review])
         .await
         .unwrap();
 
