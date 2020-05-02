@@ -36,7 +36,6 @@ async fn introspection() {
     );
 
     assert_eq!(res["__schema"]["mutationType"], Value::Null);
-
     assert_eq!(res["__schema"]["subscriptionType"], Value::Null);
 
     let schema: Schema = serde_json::from_value(res["__schema"].clone()).unwrap();
@@ -45,121 +44,99 @@ async fn introspection() {
         schema
             .types
             .iter()
-            .find(|t| t.kind == TypeKind::Object && t.name == Some("Mutation".to_owned()))
-            .is_none(),
+            .any(|t| t.kind == TypeKind::Object && t.name == Some("Mutation".to_owned())),
+        false
+    );
+
+    assert_eq!(
+        schema.types.iter().any(|t| t.kind == TypeKind::Object
+            && t.name == Some("Query".to_owned())
+            && t.fields.as_ref().unwrap().len() == 5
+            && t.fields
+                .as_ref()
+                .unwrap()
+                .iter()
+                .filter(|field| match field.name.as_ref() {
+                    "node" | "nodes" | "products" | "viewer" | "users" => true,
+                    _ => false,
+                })
+                .count()
+                == 5),
         true
     );
 
     assert_eq!(
-        schema
-            .types
-            .iter()
-            .find(|t| t.kind == TypeKind::Object
-                && t.name == Some("Query".to_owned())
-                && t.fields.as_ref().unwrap().len() == 5
-                && t.fields
-                    .as_ref()
-                    .unwrap()
-                    .into_iter()
-                    .filter(|field| match field.name.as_ref() {
-                        "node" | "nodes" | "products" | "viewer" | "users" => true,
+        schema.types.iter().any(|t| t.kind == TypeKind::Interface
+            && t.name == Some("Node".to_owned())
+            && t.fields.as_ref().unwrap().len() == 1
+            && t.fields
+                .as_ref()
+                .unwrap()
+                .iter()
+                .any(|field| field.name == "id")
+            && t.possible_types
+                .as_ref()
+                .unwrap()
+                .iter()
+                .filter(|possible_type| {
+                    match possible_type.name.as_ref().unwrap().as_ref() {
+                        "User" | "Product" | "Review" => possible_type.kind == TypeKind::Object,
                         _ => false,
-                    })
-                    .count()
-                    == 5)
-            .is_some(),
+                    }
+                })
+                .count()
+                == 3),
         true
     );
 
     assert_eq!(
-        schema
-            .types
-            .iter()
-            .find(|t| t.kind == TypeKind::Interface
-                && t.name == Some("Node".to_owned())
-                && t.fields.as_ref().unwrap().len() == 1
-                && t.fields
-                    .as_ref()
-                    .unwrap()
-                    .into_iter()
-                    .find(|field| field.name == "id")
-                    .is_some()
-                && t.possible_types
-                    .as_ref()
-                    .unwrap()
-                    .into_iter()
-                    .filter(|possible_type| {
-                        match possible_type.name.as_ref().unwrap().as_ref() {
-                            "User" | "Product" | "Review" => possible_type.kind == TypeKind::Object,
-                            _ => false,
-                        }
-                    })
-                    .count()
-                    == 3)
-            .is_some(),
+        schema.types.iter().any(|t| t.kind == TypeKind::Object
+            && t.name == Some("User".to_owned())
+            && t.fields.as_ref().unwrap().len() == 5
+            && t.fields
+                .as_ref()
+                .unwrap()
+                .iter()
+                .filter(|field| match field.name.as_ref() {
+                    "id" | "email" | "username" | "reviews" | "sayHello" => true,
+                    _ => false,
+                })
+                .count()
+                == 5),
         true
     );
 
     assert_eq!(
-        schema
-            .types
-            .iter()
-            .find(|t| t.kind == TypeKind::Object
-                && t.name == Some("User".to_owned())
-                && t.fields.as_ref().unwrap().len() == 5
-                && t.fields
-                    .as_ref()
-                    .unwrap()
-                    .into_iter()
-                    .filter(|field| match field.name.as_ref() {
-                        "id" | "email" | "username" | "reviews" | "sayHello" => true,
-                        _ => false,
-                    })
-                    .count()
-                    == 5)
-            .is_some(),
+        schema.types.iter().any(|t| t.kind == TypeKind::Object
+            && t.name == Some("Product".to_owned())
+            && t.fields.as_ref().unwrap().len() == 4
+            && t.fields
+                .as_ref()
+                .unwrap()
+                .iter()
+                .filter(|field| match field.name.as_ref() {
+                    "id" | "name" | "reviews" | "inStock" => true,
+                    _ => false,
+                })
+                .count()
+                == 4),
         true
     );
 
     assert_eq!(
-        schema
-            .types
-            .iter()
-            .find(|t| t.kind == TypeKind::Object
-                && t.name == Some("Product".to_owned())
-                && t.fields.as_ref().unwrap().len() == 4
-                && t.fields
-                    .as_ref()
-                    .unwrap()
-                    .into_iter()
-                    .filter(|field| match field.name.as_ref() {
-                        "id" | "name" | "reviews" | "inStock" => true,
-                        _ => false,
-                    })
-                    .count()
-                    == 4)
-            .is_some(),
-        true
-    );
-
-    assert_eq!(
-        schema
-            .types
-            .iter()
-            .find(|t| t.kind == TypeKind::Object
-                && t.name == Some("Review".to_owned())
-                && t.fields.as_ref().unwrap().len() == 4
-                && t.fields
-                    .as_ref()
-                    .unwrap()
-                    .into_iter()
-                    .filter(|field| match field.name.as_ref() {
-                        "id" | "body" | "author" | "product" => true,
-                        _ => false,
-                    })
-                    .count()
-                    == 4)
-            .is_some(),
+        schema.types.iter().any(|t| t.kind == TypeKind::Object
+            && t.name == Some("Review".to_owned())
+            && t.fields.as_ref().unwrap().len() == 4
+            && t.fields
+                .as_ref()
+                .unwrap()
+                .iter()
+                .filter(|field| match field.name.as_ref() {
+                    "id" | "body" | "author" | "product" => true,
+                    _ => false,
+                })
+                .count()
+                == 4),
         true
     );
 
@@ -167,8 +144,7 @@ async fn introspection() {
         schema
             .directives
             .iter()
-            .filter(|directive| directive.name == "include".to_owned()
-                || directive.name == "skip".to_owned())
+            .filter(|directive| directive.name == "include" || directive.name == "skip")
             .count()
             == 2,
         true

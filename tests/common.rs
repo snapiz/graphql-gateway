@@ -1,5 +1,5 @@
 use async_graphql::http::GQLResponse;
-use async_graphql::{ObjectType, Schema, SubscriptionType, Variables, ID, QueryBuilder};
+use async_graphql::{ObjectType, QueryBuilder, Schema, SubscriptionType, Variables, ID};
 use async_trait::async_trait;
 use base64::DecodeError;
 use graphql_gateway::{Executor, Payload};
@@ -36,13 +36,13 @@ impl From<ParseIntError> for Error {
 pub fn to_global_id(name: &str, id: usize) -> ID {
     let encoded = base64::encode(format!("{}:{}", name, id));
 
-    return ID::from(encoded);
+    ID::from(encoded)
 }
 
 pub fn from_global_id(id: &ID) -> Result<(String, usize), Error> {
     let decoded = &base64::decode(id.as_str())?;
     let decoded = from_utf8(decoded)?;
-    let data: Vec<_> = decoded.splitn(2, ":").collect();
+    let data: Vec<_> = decoded.splitn(2, ':').collect();
 
     if data.len() != 2 {
         return Err(Error::ParseGlobalId);
@@ -51,7 +51,7 @@ pub fn from_global_id(id: &ID) -> Result<(String, usize), Error> {
     let decoded_type = data[0].to_string();
     let decoded_id = data[1].parse::<usize>()?;
 
-    return Ok((decoded_type, decoded_id));
+    Ok((decoded_type, decoded_id))
 }
 
 pub struct TestExecutor<'a, Q, M, S>(&'a str, Schema<Q, M, S>)
@@ -83,7 +83,7 @@ where
 }
 
 #[async_trait]
-impl<'a, Q, M, S> Executor for TestExecutor<'a, Q, M, S>
+impl<'a, Q, M, S> Executor for TestExecutor<'_, Q, M, S>
 where
     Q: ObjectType + Send + Sync + 'static,
     M: ObjectType + Send + Sync + 'static,
@@ -192,7 +192,7 @@ pub mod account {
 
         #[field]
         async fn viewer(&self) -> Option<User> {
-            USERS.clone().get(0).map(|u| u.clone())
+            USERS.clone().get(0).cloned()
         }
 
         #[field]
@@ -281,7 +281,6 @@ pub mod inventory {
         pub static ref EXECUTOR: TestExecutor<'static, Query, EmptyMutation, EmptySubscription> = TestExecutor::new("inventory", Query {}, EmptyMutation, EmptySubscription);
     }
 }
-
 
 pub mod inventory_updated {
     use async_graphql::{EmptyMutation, EmptySubscription, ID};

@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use super::error::Result;
+use super::error::{Error, Result};
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Default, Clone)]
 pub struct Schema {
@@ -92,6 +92,15 @@ pub struct Type {
   pub input_fields: Option<Vec<InputValue>>,
   #[serde(rename = "ofType")]
   pub of_type: Option<Box<Type>>,
+}
+
+impl Type {
+  pub fn name(&self) -> Result<&str> {
+    match &self.name {
+      Some(name) => Ok(name),
+      _ => Err(Error::Custom("object_type name must be define".to_owned())),
+    }
+  }
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Default, Clone)]
