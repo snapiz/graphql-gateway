@@ -12,16 +12,20 @@ async fn introspection() {
     let product = product::EXECUTOR.clone();
     let review = review::EXECUTOR.clone();
 
-    let res = graphql_gateway::from_executors(vec![&account, &inventory, &product, &review])
+    let gateway = graphql_gateway::from_executors(vec![&account, &inventory, &product, &review])
         .await
-        .unwrap()
-        .execute(&Payload {
+        .unwrap();
+
+    let res = graphql_gateway::execute(
+        &gateway,
+        &Payload {
             query: graphql_gateway::INTROSPECTION_QUERY.to_owned(),
             operation_name: Some("IntrospectionQuery".to_owned()),
             variables: None,
-        })
-        .await
-        .unwrap();
+        },
+    )
+    .await
+    .unwrap();
 
     assert_eq!(
         res["__schema"]["queryType"],

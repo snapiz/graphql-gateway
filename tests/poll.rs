@@ -13,12 +13,14 @@ async fn poll() {
     let product = product::EXECUTOR.clone();
     let review = review::EXECUTOR.clone();
 
-    let mut gateway = graphql_gateway::from_executors(vec![&account, &inventory, &product, &review])
-        .await
-        .unwrap();
+    let mut gateway =
+        graphql_gateway::from_executors(vec![&account, &inventory, &product, &review])
+            .await
+            .unwrap();
 
-    let res = gateway
-        .execute(&Payload {
+    let res = graphql_gateway::execute(
+        &gateway,
+        &Payload {
             query: r#"
                 query {
                     node(id: "UHJvZHVjdDow") {
@@ -32,8 +34,9 @@ async fn poll() {
             .to_owned(),
             operation_name: None,
             variables: None,
-        })
-        .await;
+        },
+    )
+    .await;
 
     let response = serde_json::to_value(Response(res)).unwrap();
 
@@ -51,8 +54,9 @@ async fn poll() {
     gateway.poll("inventory").await.unwrap();
 
     assert_eq!(
-        gateway
-            .execute(&Payload {
+        graphql_gateway::execute(
+            &gateway,
+            &Payload {
                 query: r#"
                     query {
                         node(id: "UHJvZHVjdDow") {
@@ -66,9 +70,10 @@ async fn poll() {
                 .to_owned(),
                 operation_name: None,
                 variables: None,
-            })
-            .await
-            .unwrap(),
+            }
+        )
+        .await
+        .unwrap(),
         json!({
             "node": {
                 "name": "Product 1",
@@ -77,8 +82,9 @@ async fn poll() {
         })
     );
 
-    let res = gateway
-        .execute(&Payload {
+    let res = graphql_gateway::execute(
+        &gateway,
+        &Payload {
             query: r#"
                 query {
                     node(id: "UHJvZHVjdDow") {
@@ -92,8 +98,9 @@ async fn poll() {
             .to_owned(),
             operation_name: None,
             variables: None,
-        })
-        .await;
+        },
+    )
+    .await;
 
     let response = serde_json::to_value(Response(res)).unwrap();
 
@@ -104,18 +111,14 @@ async fn poll() {
         })
     );
 
-
-    gateway
-        .executors
-        .insert("inventory".to_owned(), &inventory);
+    gateway.executors.insert("inventory".to_owned(), &inventory);
 
     gateway.poll("inventory").await.unwrap();
 
-
-
     assert_eq!(
-        gateway
-            .execute(&Payload {
+        graphql_gateway::execute(
+            &gateway,
+            &Payload {
                 query: r#"
                     query {
                         node(id: "UHJvZHVjdDow") {
@@ -129,9 +132,10 @@ async fn poll() {
                 .to_owned(),
                 operation_name: None,
                 variables: None,
-            })
-            .await
-            .unwrap(),
+            }
+        )
+        .await
+        .unwrap(),
         json!({
             "node": {
                 "name": "Product 1",
@@ -140,8 +144,9 @@ async fn poll() {
         })
     );
 
-    let res = gateway
-        .execute(&Payload {
+    let res = graphql_gateway::execute(
+        &gateway,
+        &Payload {
             query: r#"
                 query {
                     node(id: "UHJvZHVjdDow") {
@@ -155,8 +160,9 @@ async fn poll() {
             .to_owned(),
             operation_name: None,
             variables: None,
-        })
-        .await;
+        },
+    )
+    .await;
 
     let response = serde_json::to_value(Response(res)).unwrap();
 

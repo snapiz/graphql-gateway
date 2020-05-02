@@ -1,13 +1,7 @@
-use graphql_parser::query::{Definition, OperationDefinition};
-use graphql_parser::Pos;
-use serde_json::Value;
 use std::collections::HashMap;
 
-use super::context::Context;
-use super::error::{Error, GraphQLError, QueryError, Result};
+use super::error::{Error, Result};
 use super::executor::Executor;
-use super::graphql::Payload;
-use super::query;
 use super::schema;
 use super::schema::{Field, Schema, Type};
 
@@ -36,76 +30,6 @@ impl<'a> Gateway<'a> {
         self.objects = self.schema.to_objects();
 
         Ok(())
-    }
-
-    pub async fn execute(&self, payload: &Payload) -> Result<Value> {
-        let query = graphql_parser::parse_query::<String>(payload.query.as_str())?;
-
-        for definition in &query.definitions {
-            match definition {
-                Definition::Operation(operation) => match operation {
-                    OperationDefinition::Query(ast_query) => {
-                        let ctx = &Context::new(&self, payload, &query, ast_query.variable_definitions.clone());
-                        let object_type = match ctx.object_type("Query") {
-                            Some(object_type) => object_type,
-                            _ => {
-                                return Err(Error::Custom("Schema must have Query type".to_owned()))
-                            }
-                        };
-                        let data = query::query(
-                            ctx,
-                            object_type,
-                            ast_query.selection_set.items.clone(),
-                        )
-                        .await?;
-
-                        return query::resolve(
-                            ctx,
-                            object_type,
-                            ast_query.selection_set.items.clone(),
-                            data,
-                        )
-                        .await;
-                    }
-                    OperationDefinition::Mutation(mutation) => {
-                        let ctx = &Context::new(&self, payload, &query, mutation.variable_definitions.clone());
-                        let object_type = match ctx.object_type("Mutation") {
-                            Some(object_type) => object_type,
-                            _ => {
-                                let err = GraphQLError {
-                                    pos: Pos { line: 0, column: 0 },
-                                    err: QueryError::NotConfiguredMutations,
-                                };
-                                return Err(Error::Query(vec![err]));
-                            }
-                        };
-                        let mutation = mutation.clone();
-                        let root_data = query::query(
-                            ctx,
-                            object_type,
-                            mutation.selection_set.items.clone(),
-                        )
-                        .await?;
-
-                        return query::resolve(
-                            ctx,
-                            object_type,
-                            mutation.selection_set.items,
-                            root_data,
-                        )
-                        .await;
-                    }
-                    _ => {}
-                },
-                _ => {}
-            };
-        }
-
-        let err = GraphQLError {
-            pos: Pos { line: 0, column: 0 },
-            err: QueryError::NotSupported,
-        };
-        return Err(Error::Query(vec![err]));
     }
 }
 

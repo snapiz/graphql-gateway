@@ -15,8 +15,9 @@ async fn error_not_supported() {
         .await
         .unwrap();
 
-    let res = gateway
-        .execute(&Payload {
+    let res = graphql_gateway::execute(
+        &gateway,
+        &Payload {
             query: r#"
                 subscription {
                     commentAdded(repoFullName: "yes"){
@@ -28,8 +29,9 @@ async fn error_not_supported() {
             .to_owned(),
             operation_name: None,
             variables: None,
-        })
-        .await;
+        },
+    )
+    .await;
 
     let response = serde_json::to_value(Response(res)).unwrap();
 
@@ -51,8 +53,9 @@ async fn error_field_not_found() {
         .await
         .unwrap();
 
-    let res = gateway
-        .execute(&Payload {
+    let res = graphql_gateway::execute(
+        &gateway,
+        &Payload {
             query: r#"
                 query {
                     products {
@@ -65,8 +68,9 @@ async fn error_field_not_found() {
             .to_owned(),
             operation_name: None,
             variables: None,
-        })
-        .await;
+        },
+    )
+    .await;
 
     let response = serde_json::to_value(Response(res)).unwrap();
 
@@ -88,8 +92,9 @@ async fn error_unknown_fragment() {
         .await
         .unwrap();
 
-    let res = gateway
-        .execute(&Payload {
+    let res = graphql_gateway::execute(
+        &gateway,
+        &Payload {
             query: r#"
                 query {
                     products {
@@ -101,8 +106,9 @@ async fn error_unknown_fragment() {
             .to_owned(),
             operation_name: None,
             variables: None,
-        })
-        .await;
+        },
+    )
+    .await;
 
     let response = serde_json::to_value(Response(res)).unwrap();
 

@@ -17,8 +17,9 @@ async fn query_executor() {
         .unwrap();
 
     assert_eq!(
-        gateway
-            .execute(&Payload {
+        graphql_gateway::execute(
+            &gateway,
+            &Payload {
                 query: r#"
                     query {
                         products {
@@ -30,9 +31,10 @@ async fn query_executor() {
                 .to_owned(),
                 operation_name: None,
                 variables: None,
-            })
-            .await
-            .unwrap(),
+            }
+        )
+        .await
+        .unwrap(),
         json!({
             "products": [
                 { "id": "UHJvZHVjdDow", "name": "Product 1" },
@@ -54,8 +56,9 @@ async fn query_executors() {
         .unwrap();
 
     assert_eq!(
-        gateway
-            .execute(&Payload {
+        graphql_gateway::execute(
+            &gateway,
+            &Payload {
                 query: r#"
                     query {
                         viewer {
@@ -81,9 +84,10 @@ async fn query_executors() {
                 .to_owned(),
                 operation_name: None,
                 variables: None,
-            })
-            .await
-            .unwrap(),
+            }
+        )
+        .await
+        .unwrap(),
         json!({
             "viewer": {
                 "email": "john@doe.com",
@@ -131,8 +135,9 @@ async fn query_batch() {
         .unwrap();
 
     assert_eq!(
-        gateway
-            .execute(&Payload {
+        graphql_gateway::execute(
+            &gateway,
+            &Payload {
                 query: r#"
                     query {
                         users {
@@ -154,9 +159,10 @@ async fn query_batch() {
                 .to_owned(),
                 operation_name: None,
                 variables: None,
-            })
-            .await
-            .unwrap(),
+            }
+        )
+        .await
+        .unwrap(),
         json!({
             "users": [
                 {
@@ -218,8 +224,9 @@ async fn query_node() {
         .unwrap();
 
     assert_eq!(
-        gateway
-            .execute(&Payload {
+        graphql_gateway::execute(
+            &gateway,
+            &Payload {
                 query: r#"
                     query {
                         node(id: "VXNlcjow") {
@@ -243,9 +250,10 @@ async fn query_node() {
                 .to_owned(),
                 operation_name: None,
                 variables: None,
-            })
-            .await
-            .unwrap(),
+            }
+        )
+        .await
+        .unwrap(),
         json!({
             "node": {
                 "email": "john@doe.com",
@@ -289,8 +297,9 @@ async fn query_nodes_batch() {
         .unwrap();
 
     assert_eq!(
-        gateway
-            .execute(&Payload {
+        graphql_gateway::execute(
+            &gateway,
+            &Payload {
                 query: r#"
                     query {
                         nodes(ids: ["VXNlcjow", "VXNlcjoxMA=="]) {
@@ -314,9 +323,10 @@ async fn query_nodes_batch() {
                 .to_owned(),
                 operation_name: None,
                 variables: None,
-            })
-            .await
-            .unwrap(),
+            }
+        )
+        .await
+        .unwrap(),
         json!({
             "nodes": [{
                 "email": "john@doe.com",
@@ -360,8 +370,9 @@ async fn query_nodes() {
         .unwrap();
 
     assert_eq!(
-        gateway
-            .execute(&Payload {
+        graphql_gateway::execute(
+            &gateway,
+            &Payload {
                 query: r#"
                     query {
                         nodes(ids: ["UmV2aWV3OjA=", "UmV2aWV3OjEw"]) {
@@ -381,9 +392,10 @@ async fn query_nodes() {
                 .to_owned(),
                 operation_name: None,
                 variables: None,
-            })
-            .await
-            .unwrap(),
+            }
+        )
+        .await
+        .unwrap(),
         json!({
             "nodes": [{
                 "body": "Good product",
@@ -411,8 +423,9 @@ async fn query_alias() {
         .unwrap();
 
     assert_eq!(
-        gateway
-            .execute(&Payload {
+        graphql_gateway::execute(
+            &gateway,
+            &Payload {
                 query: r#"
                     query {
                         user: node(id: "VXNlcjow") {
@@ -448,9 +461,10 @@ async fn query_alias() {
                 .to_owned(),
                 operation_name: None,
                 variables: None,
-            })
-            .await
-            .unwrap(),
+            }
+        )
+        .await
+        .unwrap(),
         json!({
             "user": {
                 "userEmail": "john@doe.com",
@@ -504,8 +518,9 @@ async fn query_variables() {
         .unwrap();
 
     assert_eq!(
-        gateway
-            .execute(&Payload {
+        graphql_gateway::execute(
+            &gateway,
+            &Payload {
                 query: r#"
                     query NodeQuery ($userId: ID!, $reviewId: ID!, $name: String!) {
                         user: node(id: $userId) {
@@ -546,9 +561,10 @@ async fn query_variables() {
                     "reviewId": "UmV2aWV3OjA=",
                     "name": "John"
                 })),
-            })
-            .await
-            .unwrap(),
+            }
+        )
+        .await
+        .unwrap(),
         json!({
             "user": {
                 "userEmail": "john@doe.com",
@@ -604,8 +620,9 @@ async fn query_fragment_spread() {
         .unwrap();
 
     assert_eq!(
-        gateway
-            .execute(&Payload {
+        graphql_gateway::execute(
+            &gateway,
+            &Payload {
                 query: r#"
                     query FragmentSpreadQuery ($userId: ID!) {
                         user: node(id: $userId) {
@@ -643,9 +660,10 @@ async fn query_fragment_spread() {
                 variables: Some(json!({
                     "userId": "VXNlcjow"
                 })),
-            })
-            .await
-            .unwrap(),
+            }
+        )
+        .await
+        .unwrap(),
         json!({
             "user": {
                 "id": "VXNlcjow",
