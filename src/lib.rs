@@ -96,5 +96,6 @@ pub async fn execute<'a>(gateway: &Gateway<'a>, payload: &Payload) -> Result<Val
         pos: Pos { line: 0, column: 0 },
         err: QueryError::NotSupported,
     };
-    return Err(Error::Query(vec![err]));
+
+    Err(Error::Query(vec![err]))
 }

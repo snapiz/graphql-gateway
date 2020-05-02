@@ -90,7 +90,7 @@ pub async fn query<'a>(
             }
         }
 
-        if errors.len() > 0 {
+        if !errors.is_empty() {
             return Err(Error::Query(errors));
         }
 
@@ -185,7 +185,7 @@ pub async fn query_node<'a>(
                 .map(|v| v["id"].clone())
                 .collect::<Vec<Value>>();
 
-            if values.len() == 0 {
+            if values.is_empty() {
                 return Ok(data.clone());
             }
 
@@ -269,7 +269,7 @@ pub async fn query_node<'a>(
             }
         }
 
-        if errors.len() > 0 {
+        if !errors.is_empty() {
             return Err(Error::Query(errors));
         }
 
@@ -314,9 +314,9 @@ pub async fn query_node<'a>(
             .collect::<Vec<VariableDefinition<'a, String>>>();
 
         variable_definitions.push(VariableDefinition {
+            var_type,
             position: Pos { line: 0, column: 0 },
             name: var_name.to_owned(),
-            var_type: var_type,
             default_value: None,
         });
 
@@ -437,7 +437,7 @@ pub async fn query_node<'a>(
                             }
                         }
 
-                        if object.len() == 0 {
+                        if object.is_empty() {
                             Value::Null
                         } else {
                             object.into()
@@ -675,7 +675,7 @@ fn resolve_executor<'a>(
 
                     field.selection_set.items = field_items;
 
-                    if field.selection_set.items.len() > 0 {
+                    if !field.selection_set.items.is_empty() {
                         for (_, value) in field.arguments.clone() {
                             if let AstValue::Variable(name) = value {
                                 variable_definitions.insert(name, true);
@@ -819,7 +819,7 @@ pub fn resolve<'a>(
     data: Value,
 ) -> BoxFuture<'a, Result<Value>> {
     async move {
-        if selections.len() == 0 || data == Value::Null {
+        if selections.is_empty() || data == Value::Null {
             return Ok(data.clone());
         }
 
@@ -831,7 +831,7 @@ pub fn resolve<'a>(
         let data = query_node(ctx, object_type, selections.clone(), data.clone()).await?;
 
         if let Value::Array(values) = &data {
-            if values.len() == 0 {
+            if values.is_empty() {
                 return Ok(Value::Array(vec![]));
             }
 
