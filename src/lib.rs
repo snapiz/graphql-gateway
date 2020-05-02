@@ -27,12 +27,12 @@ pub use schema::{
     Directive, DirectiveLocation, EnumValue, Field, InputValue, Schema, Type, TypeKind,
 };
 
-pub async fn execute<'a>(gateway: &Gateway<'a>, payload: &Payload) -> Result<Value> {
+pub async fn execute(gateway: &Gateway<'_>, payload: &Payload) -> Result<Value> {
     let query = graphql_parser::parse_query::<String>(payload.query.as_str())?;
 
     for definition in &query.definitions {
-        match definition {
-            Definition::Operation(operation) => match operation {
+        if let Definition::Operation(operation) = definition {
+            match operation {
                 OperationDefinition::Query(ast_query) => {
                     let ctx = &Context::new(
                         gateway,
@@ -87,8 +87,7 @@ pub async fn execute<'a>(gateway: &Gateway<'a>, payload: &Payload) -> Result<Val
                     .await;
                 }
                 _ => {}
-            },
-            _ => {}
+            }
         };
     }
 
