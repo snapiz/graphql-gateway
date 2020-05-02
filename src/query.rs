@@ -774,7 +774,7 @@ pub async fn query_node<'a>(
     let mut futures = Vec::new();
 
     for (name, _) in executors {
-        let info/* (executor_selections, mut variable_definitions, fragments) */ = resolve_executor(
+        let info = resolve_executor(
             name.to_owned().to_string(),
             ctx,
             object_type,
@@ -825,7 +825,7 @@ pub async fn query_node<'a>(
                 },
             };
 
-            let info/* (executor_selections, fragment_variable_definitions, _) */ = resolve_executor(
+            let info = resolve_executor(
                 name.to_owned().to_string(),
                 ctx,
                 object_type,
