@@ -66,35 +66,53 @@ impl<'a> Gateway<'a> {
                     OperationDefinition::Query(query) => {
                         ctx.variable_definitions = query.variable_definitions.clone();
 
+                        let object_type = match ctx.object_type("Query") {
+                            Some(object_type) => object_type,
+                            _ => {
+                                return Err(Error::Custom("Schema must have Query type".to_owned()))
+                            }
+                        };
+
                         let data = query_root_selections(
                             &ctx,
+                            object_type,
                             query.selection_set.items.clone(),
-                            "Query".to_owned(),
                         )
                         .await?;
 
                         return resolver::resolve_selections(
                             &ctx,
+                            object_type,
                             query.selection_set.items.clone(),
-                            "Query".to_owned(),
                             data,
                         )
                         .await;
                     }
                     OperationDefinition::Mutation(mutation) => {
+                        let object_type = match ctx.object_type("Mutation") {
+                            Some(object_type) => object_type,
+                            _ => {
+                                let err = GraphQLError {
+                                    pos: Pos { line: 0, column: 0 },
+                                    err: QueryError::NotConfiguredMutations,
+                                };
+                                return Err(Error::Query(vec![err]));
+                            }
+                        };
+
                         let mutation = mutation.clone();
 
                         let root_data = query_root_selections(
                             &ctx,
+                            object_type,
                             mutation.selection_set.items.clone(),
-                            "Mutation".to_owned(),
                         )
                         .await?;
 
                         return resolver::resolve_selections(
                             &ctx,
+                            object_type,
                             mutation.selection_set.items,
-                            "Mutation".to_owned(),
                             root_data,
                         )
                         .await;

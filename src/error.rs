@@ -14,6 +14,12 @@ pub enum QueryError {
 
     #[error("Unknown fragment \"{name}\".")]
     UnknownFragment { name: String },
+
+    #[error("Missing type condition on inline fragment \"{name}\".")]
+    MissingTypeConditionInlineFragment { name: String },
+
+    #[error("Schema is not configured for mutations.")]
+    NotConfiguredMutations,
 }
 
 #[derive(Debug)]
@@ -24,6 +30,9 @@ pub struct GraphQLError {
 
 #[derive(Debug, Error)]
 pub enum Error {
+    #[error("{0}")]
+    Custom(String),
+
     #[error("Json error: {0}")]
     Json(JsonError),
 

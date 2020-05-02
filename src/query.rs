@@ -1,6 +1,6 @@
 use graphql_parser::query::{
     Definition, Document, Field, InlineFragment, Mutation, OperationDefinition, Query, Selection,
-    SelectionSet, Type, TypeCondition, Value as AstValue, VariableDefinition,
+    SelectionSet, Type as AstType, TypeCondition, Value as AstValue, VariableDefinition,
 };
 use graphql_parser::Pos;
 use serde_json::{Map, Value};
@@ -10,22 +10,28 @@ use super::context::Context;
 use super::error::{Error, GraphQLError, QueryError, Result};
 use super::executor::Executor;
 use super::graphql::Payload;
+use super::schema::{Type, TypeKind};
 
 pub async fn query_root_selections<'a>(
     ctx: &'a Context<'a>,
+    object_type: &'a Type,
     selections: Vec<Selection<'a, String>>,
-    type_name: String,
 ) -> Result<Value> {
-    let executors = resolve_executors(ctx, selections.clone(), type_name.to_owned(), Value::Null)?;
+    let executors = resolve_executors(ctx, object_type, selections.clone(), Value::Null)?;
     let mut futures = Vec::new();
+
+    let object_type_name = match object_type.name.as_ref() {
+        Some(name) => name,
+        _ => return Err(Error::Custom("object_type name must be define".to_owned())),
+    };
 
     for (name, _) in executors {
         let (executor_selections, mut variable_definitions, fragments) =
             resolve_executor_selections(
                 name.to_owned().to_string(),
                 ctx,
+                object_type,
                 selections.clone(),
-                type_name.to_owned(),
                 Value::Null,
             )?;
 
@@ -54,16 +60,28 @@ pub async fn query_root_selections<'a>(
 
             let mut fragment = fragment.clone();
 
-            let type_name = match &fragment.type_condition {
-                TypeCondition::On(name) => name.to_owned(),
+            let object_type = match &fragment.type_condition {
+                TypeCondition::On(name) => match ctx.object_type(name) {
+                    Some(object_type) => object_type,
+                    _ => {
+                        let error = GraphQLError {
+                            pos: fragment.position,
+                            err: QueryError::MissingTypeConditionInlineFragment {
+                                name: name.to_owned(),
+                            },
+                        };
+                        errors.push(error);
+                        continue;
+                    }
+                },
             };
 
             let (executor_selections, fragment_variable_definitions, _) =
                 resolve_executor_selections(
                     name.to_owned().to_string(),
                     ctx,
+                    object_type,
                     fragment.selection_set.items.clone(),
-                    type_name,
                     Value::Null,
                 )?;
 
@@ -90,7 +108,7 @@ pub async fn query_root_selections<'a>(
             })
             .collect::<Vec<VariableDefinition<'a, String>>>();
 
-        let operation = match type_name.as_str() {
+        let operation = match object_type_name.as_str() {
             "Query" => OperationDefinition::Query(Query {
                 position: Pos { line: 0, column: 0 },
                 name: ctx.payload.operation_name.clone(),
@@ -142,10 +160,15 @@ pub async fn query_root_selections<'a>(
 
 pub async fn query_node_selections<'a>(
     ctx: &'a Context<'a>,
+    object_type: &'a Type,
     selections: Vec<Selection<'a, String>>,
-    type_name: String,
     data: Value,
 ) -> Result<Value> {
+    let object_type_name = match object_type.name.as_ref() {
+        Some(name) => name.as_str(),
+        _ => return Err(Error::Custom("object_type name must be define".to_owned())),
+    };
+
     let first_data = match &data {
         Value::Array(values) => match values.get(0) {
             Some(value) => value.clone(),
@@ -180,12 +203,7 @@ pub async fn query_node_selections<'a>(
 
     let is_array = ids.len() > 1;
 
-    let executors = resolve_executors(
-        ctx,
-        selections.clone(),
-        type_name.to_owned(),
-        first_data.clone(),
-    )?;
+    let executors = resolve_executors(ctx, object_type, selections.clone(), first_data.clone())?;
 
     let mut futures = Vec::new();
 
@@ -194,8 +212,8 @@ pub async fn query_node_selections<'a>(
             resolve_executor_selections(
                 name.to_owned().to_string(),
                 ctx,
+                object_type,
                 selections.clone(),
-                type_name.to_owned(),
                 first_data.clone(),
             )?;
 
@@ -224,16 +242,28 @@ pub async fn query_node_selections<'a>(
 
             let mut fragment = fragment.clone();
 
-            let type_name = match &fragment.type_condition {
-                TypeCondition::On(name) => name.to_owned(),
+            let object_type = match &fragment.type_condition {
+                TypeCondition::On(name) => match ctx.object_type(&name) {
+                    Some(object_type) => object_type,
+                    _ => {
+                        let error = GraphQLError {
+                            pos: fragment.position,
+                            err: QueryError::MissingTypeConditionInlineFragment {
+                                name: name.to_owned(),
+                            },
+                        };
+                        errors.push(error);
+                        continue;
+                    }
+                },
             };
 
             let (executor_selections, fragment_variable_definitions, _) =
                 resolve_executor_selections(
                     name.to_owned().to_string(),
                     ctx,
+                    object_type,
                     fragment.selection_set.items.clone(),
-                    type_name,
                     first_data.clone(),
                 )?;
 
@@ -252,7 +282,7 @@ pub async fn query_node_selections<'a>(
         let (var_name, var_type, field_name) = if is_array {
             (
                 "ids".to_owned(),
-                Type::NonNullType(Box::new(Type::ListType(Box::new(Type::NamedType(
+                AstType::NonNullType(Box::new(AstType::ListType(Box::new(AstType::NamedType(
                     "ID".to_owned(),
                 ))))),
                 "nodes".to_owned(),
@@ -260,16 +290,16 @@ pub async fn query_node_selections<'a>(
         } else {
             (
                 "id".to_owned(),
-                Type::NonNullType(Box::new(Type::NamedType("ID".to_owned()))),
+                AstType::NonNullType(Box::new(AstType::NamedType("ID".to_owned()))),
                 "node".to_owned(),
             )
         };
 
-        let node_items = match type_name.as_str() {
+        let node_items = match object_type_name {
             "Node" => executor_selections,
             _ => vec![Selection::InlineFragment(InlineFragment {
                 position: Pos { line: 0, column: 0 },
-                type_condition: Some(TypeCondition::On(type_name.to_owned())),
+                type_condition: Some(TypeCondition::On(object_type_name.to_owned())),
                 directives: vec![],
                 selection_set: SelectionSet {
                     span: (Pos { line: 0, column: 0 }, Pos { line: 0, column: 0 }),
@@ -463,24 +493,33 @@ async fn execute(
 
 fn resolve_executors<'a>(
     ctx: &'a Context<'a>,
+    object_type: &'a Type,
     selections: Vec<Selection<'a, String>>,
-    type_name: String,
     data: Value,
 ) -> Result<HashMap<&'a str, bool>> {
     let mut executors = HashMap::new();
     let mut errors = Vec::new();
 
+    let object_type_name = match object_type.name.as_ref() {
+        Some(name) => name.as_str(),
+        _ => return Err(Error::Custom("object_type name must be define".to_owned())),
+    };
+
     for selection in selections {
         match selection {
             Selection::Field(field) => {
-                let s_field = match ctx.field(&type_name, field.name.as_str()) {
+                if field.name.as_str() == "__schema" {
+                    continue;
+                }
+
+                let s_field = match ctx.field(object_type_name, field.name.as_str()) {
                     Some(f) => f,
                     _ => {
                         let error = GraphQLError {
                             pos: field.position,
                             err: QueryError::FieldNotFound {
                                 name: field.name,
-                                object: type_name.to_owned(),
+                                object: object_type_name.to_owned(),
                             },
                         };
                         errors.push(error);
@@ -490,16 +529,19 @@ fn resolve_executors<'a>(
 
                 let executor_name = match &s_field.executor_name {
                     Some(name) => name.as_str(),
-                    _ => continue,
+                    _ => return Err(Error::Custom("field executor_name must be define".to_owned())),
                 };
 
-                if type_name.as_str() == "Query"
-                    && (&field.name == "node" || &field.name == "nodes")
-                {
+                let field_type = match s_field.field_type() {
+                    Some(field_type) => field_type,
+                    _ => return Err(Error::Custom("field type must be define".to_owned())),
+                };
+
+                if field_type.kind == TypeKind::Interface {
                     let executor_names = resolve_executors(
                         ctx,
+                        field_type,
                         field.selection_set.items.clone(),
-                        "Node".to_owned(),
                         Value::Null,
                     )?;
 
@@ -532,24 +574,34 @@ fn resolve_executors<'a>(
                 };
 
                 let executor_names =
-                    resolve_executors(ctx, fragment_items, type_name.to_owned(), data.clone())?;
+                    resolve_executors(ctx, object_type, fragment_items, data.clone())?;
 
                 for (executor_name, _) in executor_names {
                     executors.insert(executor_name, true);
                 }
             }
             Selection::InlineFragment(fragment) => {
-                let type_name = match fragment.type_condition {
+                let object_type = match fragment.type_condition {
                     Some(type_condition) => match type_condition {
-                        TypeCondition::On(name) => name,
+                        TypeCondition::On(name) => match ctx.object_type(&name) {
+                            Some(object_type) => object_type,
+                            _ => {
+                                let error = GraphQLError {
+                                    pos: fragment.position,
+                                    err: QueryError::MissingTypeConditionInlineFragment { name },
+                                };
+                                errors.push(error);
+                                continue;
+                            }
+                        },
                     },
-                    _ => type_name.to_owned(),
+                    _ => object_type,
                 };
 
                 let executor_names = resolve_executors(
                     ctx,
+                    object_type,
                     fragment.selection_set.items,
-                    type_name.to_owned(),
                     data.clone(),
                 )?;
 
@@ -569,8 +621,8 @@ fn resolve_executors<'a>(
 fn resolve_executor_selections<'a>(
     executor_name: String,
     ctx: &'a Context<'a>,
+    object_type: &'a Type,
     selections: Vec<Selection<'a, String>>,
-    type_name: String,
     data: Value,
 ) -> Result<(
     Vec<Selection<'a, String>>,
@@ -583,7 +635,12 @@ fn resolve_executor_selections<'a>(
     let mut items = Vec::new();
     let mut errors = Vec::new();
 
-    if let Some(_) = ctx.field(&type_name, "id") {
+    let object_type_name = match object_type.name.as_ref() {
+        Some(name) => name.as_str(),
+        _ => return Err(Error::Custom("object_type name must be define".to_owned())),
+    };
+
+    if let Some(_) = ctx.field(object_type_name, "id") {
         cache.insert("id".to_owned(), true);
         items.push(Selection::Field(Field {
             alias: None,
@@ -601,14 +658,14 @@ fn resolve_executor_selections<'a>(
     for selection in selections {
         match selection {
             Selection::Field(field) => {
-                let s_field = match ctx.field(&type_name, field.name.as_str()) {
+                let s_field = match ctx.field(object_type_name, field.name.as_str()) {
                     Some(f) => f,
                     _ => {
                         let error = GraphQLError {
                             pos: field.position,
                             err: QueryError::FieldNotFound {
                                 name: field.name,
-                                object: type_name.to_owned(),
+                                object: object_type_name.to_owned(),
                             },
                         };
                         errors.push(error);
@@ -616,37 +673,36 @@ fn resolve_executor_selections<'a>(
                     }
                 };
 
-                let field_type_name = match s_field.field_type() {
-                    Some(field_type) => field_type
-                        .name
-                        .as_ref()
-                        .expect("Field type to have name")
-                        .into(),
-                    _ => continue,
+                let field_type = match s_field.field_type() {
+                    Some(field_type) => field_type,
+                    _ => return Err(Error::Custom("field type must be define".to_owned())),
                 };
 
                 let field_name = field.alias.as_ref().unwrap_or(&field.name);
 
                 let field_executor_name = match &s_field.executor_name {
                     Some(name) => name.as_str(),
-                    _ => continue,
+                    _ => {
+                        return Err(Error::Custom(
+                            "field executor_name must be define".to_owned(),
+                        ))
+                    }
                 };
 
                 if cache.get(field_name).is_some() {
                     continue;
                 }
 
-                if type_name.as_str() == "Query"
-                    && (&field.name == "node" || &field.name == "nodes")
-                {
+                if field_type.kind == TypeKind::Interface {
+                    println!("hello");
                     let mut field = field.clone();
 
                     let (field_items, field_variable_definitions, field_fragments) =
                         resolve_executor_selections(
                             executor_name.to_owned(),
                             ctx,
+                            field_type,
                             field.selection_set.items,
-                            "Node".to_owned(),
                             Value::Null,
                         )?;
 
@@ -687,8 +743,8 @@ fn resolve_executor_selections<'a>(
                         resolve_executor_selections(
                             executor_name.to_owned(),
                             ctx,
+                            field_type,
                             field.selection_set.items,
-                            field_type_name,
                             data.clone(),
                         )?;
 
@@ -727,8 +783,8 @@ fn resolve_executor_selections<'a>(
                 let (_, _, fragment_fragments) = resolve_executor_selections(
                     executor_name.to_owned(),
                     ctx,
+                    object_type,
                     fragment.selection_set.items.clone(),
-                    type_name.to_owned(),
                     data.clone(),
                 )?;
 
@@ -737,14 +793,26 @@ fn resolve_executor_selections<'a>(
                 }
             }
             Selection::InlineFragment(mut fragment) => {
-                let type_name = match &fragment.type_condition {
+                let (object_type_name, object_type) = match &fragment.type_condition {
                     Some(type_condition) => match type_condition {
-                        TypeCondition::On(name) => name.into(),
+                        TypeCondition::On(name) => match ctx.object_type(&name) {
+                            Some(object_type) => (name.as_str(), object_type),
+                            _ => {
+                                let error = GraphQLError {
+                                    pos: fragment.position,
+                                    err: QueryError::MissingTypeConditionInlineFragment {
+                                        name: name.to_owned(),
+                                    },
+                                };
+                                errors.push(error);
+                                continue;
+                            }
+                        },
                     },
-                    _ => type_name.to_owned(),
+                    _ => (object_type_name, object_type),
                 };
 
-                if ctx.object(&type_name, &executor_name).is_none() {
+                if ctx.object(&object_type_name, &executor_name).is_none() {
                     continue;
                 }
 
@@ -752,8 +820,8 @@ fn resolve_executor_selections<'a>(
                     resolve_executor_selections(
                         executor_name.to_owned(),
                         ctx,
+                        object_type,
                         fragment.selection_set.items.clone(),
-                        type_name.to_owned(),
                         data.clone(),
                     )?;
 

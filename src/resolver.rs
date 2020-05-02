@@ -5,11 +5,12 @@ use serde_json::{Map, Value};
 use super::context::Context;
 use super::error::{Error, GraphQLError, QueryError, Result};
 use super::query;
+use super::schema::Type;
 
 pub fn resolve_selections<'a>(
     ctx: &'a Context<'a>,
+    object_type: &'a Type,
     selections: Vec<Selection<'a, String>>,
-    type_name: String,
     data: Value,
 ) -> BoxFuture<'a, Result<Value>> {
     async move {
@@ -17,13 +18,13 @@ pub fn resolve_selections<'a>(
             return Ok(data.clone());
         }
 
-        let data = query::query_node_selections(
-            ctx,
-            selections.clone(),
-            type_name.to_owned(),
-            data.clone(),
-        )
-        .await?;
+        let object_type_name = match object_type.name.as_ref() {
+            Some(name) => name.as_str(),
+            _ => return Err(Error::Custom("object_type name must be define".to_owned())),
+        };
+
+        let data = query::query_node_selections(ctx, object_type, selections.clone(), data.clone())
+            .await?;
 
         if let Value::Array(values) = &data {
             if values.len() == 0 {
@@ -33,7 +34,7 @@ pub fn resolve_selections<'a>(
             let futures = values
                 .iter()
                 .map(|value| {
-                    resolve_selections(ctx, selections.clone(), type_name.to_owned(), value.clone())
+                    resolve_selections(ctx, object_type, selections.clone(), value.clone())
                 })
                 .collect::<Vec<BoxFuture<'a, Result<Value>>>>();
 
@@ -48,14 +49,14 @@ pub fn resolve_selections<'a>(
         for selection in selections {
             match selection {
                 Selection::Field(field) => {
-                    let s_field = match ctx.field(&type_name, field.name.as_str()) {
+                    let s_field = match ctx.field(object_type_name, field.name.as_str()) {
                         Some(f) => f,
                         _ => {
                             let error = GraphQLError {
                                 pos: field.position,
                                 err: QueryError::FieldNotFound {
                                     name: field.name,
-                                    object: type_name.to_owned(),
+                                    object: object_type_name.to_owned(),
                                 },
                             };
                             errors.push(error);
@@ -63,13 +64,9 @@ pub fn resolve_selections<'a>(
                         }
                     };
 
-                    let field_type_name = match s_field.field_type() {
-                        Some(field_type) => field_type
-                            .name
-                            .as_ref()
-                            .expect("Field type to have name")
-                            .into(),
-                        _ => continue,
+                    let field_type = match s_field.field_type() {
+                        Some(field_type) => field_type,
+                        _ => return Err(Error::Custom("field type must be define".to_owned())),
                     };
 
                     let field_name = field.alias.as_ref().unwrap_or(&field.name);
@@ -87,8 +84,8 @@ pub fn resolve_selections<'a>(
                         _ => {
                             resolve_selections(
                                 ctx,
+                                field_type,
                                 field.selection_set.items,
-                                field_type_name,
                                 field_data,
                             )
                             .await?
@@ -115,10 +112,7 @@ pub fn resolve_selections<'a>(
 
                     let selection_data = match data {
                         Value::Null => continue,
-                        _ => {
-                            resolve_selections(ctx, fragment_items, type_name.to_owned(), data)
-                                .await?
-                        }
+                        _ => resolve_selections(ctx, object_type, fragment_items, data).await?,
                     };
 
                     if let Value::Object(data) = selection_data {
@@ -128,11 +122,23 @@ pub fn resolve_selections<'a>(
                     }
                 }
                 Selection::InlineFragment(fragment) => {
-                    let type_name = match fragment.type_condition {
+                    let object_type = match fragment.type_condition {
                         Some(type_condition) => match type_condition {
-                            TypeCondition::On(name) => name,
+                            TypeCondition::On(name) => match ctx.object_type(&name) {
+                                Some(object_type) => object_type,
+                                _ => {
+                                    let error = GraphQLError {
+                                        pos: fragment.position,
+                                        err: QueryError::MissingTypeConditionInlineFragment {
+                                            name,
+                                        },
+                                    };
+                                    errors.push(error);
+                                    continue;
+                                }
+                            },
                         },
-                        _ => type_name.to_owned(),
+                        _ => object_type,
                     };
 
                     let data = data.clone();
@@ -140,7 +146,7 @@ pub fn resolve_selections<'a>(
                     let selection_data = match data {
                         Value::Null => continue,
                         _ => {
-                            resolve_selections(ctx, fragment.selection_set.items, type_name, data)
+                            resolve_selections(ctx, object_type, fragment.selection_set.items, data)
                                 .await?
                         }
                     };
