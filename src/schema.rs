@@ -114,8 +114,7 @@ impl Field {
   }
 }
 
-
-fn field_type<'a>(of_type: &Type) -> Option<&Type> {
+fn field_type(of_type: &Type) -> Option<&Type> {
   match &of_type.name {
     Some(_) => Some(of_type),
     _ => match &of_type.of_type {
@@ -225,7 +224,7 @@ impl Default for DirectiveLocation {
   }
 }
 
-pub async fn combine<'a>(schemas: &Vec<Schema>) -> Result<Schema> {
+pub async fn combine<'a>(schemas: &[Schema]) -> Result<Schema> {
   let mut types = HashMap::<String, Type>::new();
   let mut directives = HashMap::new();
 
@@ -235,7 +234,7 @@ pub async fn combine<'a>(schemas: &Vec<Schema>) -> Result<Schema> {
         .name
         .as_ref()
         .map(|name| format!("{:?}{}", schema_type.kind, name))
-        .unwrap_or("".to_owned());
+        .unwrap_or_else(|| "".to_owned());
 
       match schema_type.kind {
         TypeKind::Interface => {
@@ -243,7 +242,7 @@ pub async fn combine<'a>(schemas: &Vec<Schema>) -> Result<Schema> {
             let mut possible_types = HashMap::new();
 
             if let Some(schema_possible_types) = &schema_type.possible_types {
-              for possible_type in schema_possible_types.into_iter() {
+              for possible_type in schema_possible_types.iter() {
                 if let Some(name) = &possible_type.name {
                   possible_types.insert(name, possible_type.clone());
                 }
@@ -251,7 +250,7 @@ pub async fn combine<'a>(schemas: &Vec<Schema>) -> Result<Schema> {
             }
 
             if let Some(schema_possible_types) = &interface.possible_types {
-              for possible_type in schema_possible_types.into_iter() {
+              for possible_type in schema_possible_types.iter() {
                 if let Some(name) = &possible_type.name {
                   possible_types.insert(name, possible_type.clone());
                 }

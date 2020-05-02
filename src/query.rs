@@ -608,7 +608,7 @@ fn resolve_executor<'a>(
         _ => return Err(Error::Custom("object_type name must be define".to_owned())),
     };
 
-    if let Some(_) = ctx.field(object_type_name, "id") {
+    if ctx.field(object_type_name, "id").is_some() {
         cache.insert("id".to_owned(), true);
         items.push(Selection::Field(Field {
             alias: None,
@@ -877,7 +877,7 @@ pub fn resolve<'a>(
                         "__schema" => serde_json::to_value(&ctx.gateway.schema)?,
                         _ => data
                             .get(field_name)
-                            .map(|v| v.clone())
+                            .cloned()
                             .unwrap_or(Value::Null),
                     };
 
