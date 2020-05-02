@@ -41,30 +41,12 @@ impl<'a> Gateway<'a> {
 
     pub async fn execute(&self, payload: &Payload) -> Result<Value> {
         let query = graphql_parser::parse_query::<String>(payload.query.as_str())?;
-        let mut fragments = HashMap::new();
-
-        for definition in &query.definitions {
-            if let Definition::Fragment(fragment) = definition {
-                fragments.insert(fragment.name.as_str(), fragment.clone());
-            }
-        }
-
-        let mut ctx = Context {
-            fragments,
-            payload,
-            variable_definitions: vec![],
-            schema: &self.schema,
-            types: self.types.clone(),
-            fields: self.fields.clone(),
-            objects: self.objects.clone(),
-            executors: self.executors.clone(),
-        };
 
         for definition in &query.definitions {
             match definition {
                 Definition::Operation(operation) => match operation {
-                    OperationDefinition::Query(query) => {
-                        ctx.variable_definitions = query.variable_definitions.clone();
+                    OperationDefinition::Query(ast_query) => {
+                        let ctx = &Context::new(&self, payload, &query, ast_query.variable_definitions.clone());
 
                         let object_type = match ctx.object_type("Query") {
                             Some(object_type) => object_type,
@@ -74,21 +56,22 @@ impl<'a> Gateway<'a> {
                         };
 
                         let data = query_root_selections(
-                            &ctx,
+                            ctx,
                             object_type,
-                            query.selection_set.items.clone(),
+                            ast_query.selection_set.items.clone(),
                         )
                         .await?;
 
                         return resolver::resolve_selections(
-                            &ctx,
+                            ctx,
                             object_type,
-                            query.selection_set.items.clone(),
+                            ast_query.selection_set.items.clone(),
                             data,
                         )
                         .await;
                     }
                     OperationDefinition::Mutation(mutation) => {
+                        let ctx = &Context::new(&self, payload, &query, mutation.variable_definitions.clone());
                         let object_type = match ctx.object_type("Mutation") {
                             Some(object_type) => object_type,
                             _ => {
@@ -103,14 +86,14 @@ impl<'a> Gateway<'a> {
                         let mutation = mutation.clone();
 
                         let root_data = query_root_selections(
-                            &ctx,
+                            ctx,
                             object_type,
                             mutation.selection_set.items.clone(),
                         )
                         .await?;
 
                         return resolver::resolve_selections(
-                            &ctx,
+                            ctx,
                             object_type,
                             mutation.selection_set.items,
                             root_data,

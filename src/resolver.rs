@@ -72,7 +72,7 @@ pub fn resolve_selections<'a>(
                     let field_name = field.alias.as_ref().unwrap_or(&field.name);
 
                     let field_data = match field.name.as_str() {
-                        "__schema" => serde_json::to_value(ctx.schema)?,
+                        "__schema" => serde_json::to_value(&ctx.gateway.schema)?,
                         _ => data
                             .get(field_name)
                             .map(|v| v.clone())
