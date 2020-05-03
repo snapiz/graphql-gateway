@@ -422,17 +422,10 @@ pub fn resolve<'a>(
                         _ => data.get(field_name).cloned().unwrap_or(Value::Null),
                     };
 
-                    let selection_data = match field_data {
-                        Value::Null => field_data,
-                        _ => {
-                            resolve(ctx, field_type, field.selection_set.items, field_data).await?
-                        }
-                    };
-
+                    let selection_data = resolve(ctx, field_type, field.selection_set.items, field_data).await?;
                     selections_data.insert(field_name.to_owned(), selection_data);
                 }
                 Selection::FragmentSpread(fragment) => {
-                    let data = data.clone();
                     let fragment_items = match ctx.fragments.get(fragment.fragment_name.as_str()) {
                         Some(fragment) => fragment.selection_set.items.clone(),
                         _ => {
@@ -447,10 +440,8 @@ pub fn resolve<'a>(
                         }
                     };
 
-                    let selection_data = match data {
-                        Value::Null => continue,
-                        _ => resolve(ctx, object_type, fragment_items, data).await?,
-                    };
+                    let data = data.clone();
+                    let selection_data = resolve(ctx, object_type, fragment_items, data).await?;
 
                     if let Value::Object(data) = selection_data {
                         for (name, value) in data {
@@ -479,11 +470,7 @@ pub fn resolve<'a>(
                     };
 
                     let data = data.clone();
-
-                    let selection_data = match data {
-                        Value::Null => continue,
-                        _ => resolve(ctx, object_type, fragment.selection_set.items, data).await?,
-                    };
+                    let selection_data = resolve(ctx, object_type, fragment.selection_set.items, data).await?;
 
                     if let Value::Object(data) = selection_data {
                         for (name, value) in data {
