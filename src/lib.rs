@@ -19,6 +19,7 @@ use serde_json::Value;
 
 use context::Context;
 
+pub use context::Data;
 pub use error::{Error, GraphQLError, QueryError, Result};
 pub use executor::{Executor, INTROSPECTION_QUERY};
 pub use gateway::{from_executors, Gateway};
@@ -27,7 +28,7 @@ pub use schema::{
     Directive, DirectiveLocation, EnumValue, Field, InputValue, Schema, Type, TypeKind,
 };
 
-pub async fn execute(gateway: &Gateway<'_>, payload: &Payload) -> Result<Value> {
+pub async fn execute(gateway: &Gateway<'_>, data: &Data, payload: &Payload) -> Result<Value> {
     let query = graphql_parser::parse_query::<String>(payload.query.as_str())?;
 
     for definition in &query.definitions {
@@ -36,6 +37,7 @@ pub async fn execute(gateway: &Gateway<'_>, payload: &Payload) -> Result<Value> 
                 OperationDefinition::Query(ast_query) => {
                     let ctx = &Context::new(
                         gateway,
+                        data,
                         payload,
                         &query,
                         ast_query.variable_definitions.clone(),
@@ -59,6 +61,7 @@ pub async fn execute(gateway: &Gateway<'_>, payload: &Payload) -> Result<Value> 
                 OperationDefinition::Mutation(mutation) => {
                     let ctx = &Context::new(
                         gateway,
+                        data,
                         payload,
                         &query,
                         mutation.variable_definitions.clone(),
@@ -87,7 +90,7 @@ pub async fn execute(gateway: &Gateway<'_>, payload: &Payload) -> Result<Value> 
                     .await;
                 }
                 OperationDefinition::SelectionSet(selection_set) => {
-                    let ctx = &Context::new(gateway, payload, &query, vec![]);
+                    let ctx = &Context::new(gateway, data, payload, &query, vec![]);
                     let object_type = match ctx.object_type("Query") {
                         Some(object_type) => object_type,
                         _ => return Err(Error::Custom("Schema must have Query type".to_owned())),

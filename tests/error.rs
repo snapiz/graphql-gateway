@@ -2,7 +2,7 @@ mod common;
 
 use common::{account, product, review};
 use futures_await_test::async_test;
-use graphql_gateway::{Error, Payload, Response};
+use graphql_gateway::{Data, Error, Payload, Response};
 use serde_json::json;
 
 #[async_test]
@@ -17,6 +17,7 @@ async fn error_not_supported() {
 
     let res = graphql_gateway::execute(
         &gateway,
+        &Data::default(),
         &Payload {
             query: r#"
                 subscription {
@@ -55,6 +56,7 @@ async fn error_field_not_found() {
 
     let res = graphql_gateway::execute(
         &gateway,
+        &Data::default(),
         &Payload {
             query: r#"
                 query {
@@ -94,6 +96,7 @@ async fn error_unknown_fragment() {
 
     let res = graphql_gateway::execute(
         &gateway,
+        &Data::default(),
         &Payload {
             query: r#"
                 query {

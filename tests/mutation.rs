@@ -2,7 +2,7 @@ mod common;
 
 use common::{account, inventory, product, review};
 use futures_await_test::async_test;
-use graphql_gateway::Payload;
+use graphql_gateway::{Data, Payload};
 use serde_json::json;
 
 #[async_test]
@@ -19,6 +19,7 @@ async fn mutation_executor() {
     assert_eq!(
         graphql_gateway::execute(
             &gateway,
+            &Data::default(),
             &Payload {
                 query: r#"
                     mutation {

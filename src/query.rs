@@ -611,6 +611,7 @@ pub async fn query<'a>(
         let query = query.to_string();
 
         futures.push(executor.get_data(
+            ctx.data,
             query,
             ctx.payload.variables.clone(),
             ctx.payload.operation_name.clone(),
@@ -920,6 +921,7 @@ pub async fn query_node<'a>(
         };
 
         futures.push(executor.get_data(
+            ctx.data,
             query,
             Some(variables.into()),
             Some("NodeQuery".to_owned()),

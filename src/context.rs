@@ -1,4 +1,5 @@
 use graphql_parser::query::{Definition, Document, FragmentDefinition, VariableDefinition};
+use std::any::{Any, TypeId};
 use std::collections::HashMap;
 
 use super::executor::Executor;
@@ -6,9 +7,25 @@ use super::gateway::Gateway;
 use super::graphql::Payload;
 use super::schema::{Field, Type};
 
+#[derive(Default)]
+pub struct Data(HashMap<TypeId, Box<dyn Any + Send + Sync>>);
+
+impl Data {
+    pub fn insert<D: Any + Send + Sync>(&mut self, data: D) {
+        self.0.insert(TypeId::of::<D>(), Box::new(data));
+    }
+
+    pub fn get<D: Any + Send + Sync>(&self) -> Option<&D> {
+        self.0
+            .get(&TypeId::of::<D>())
+            .and_then(|d| d.downcast_ref::<D>())
+    }
+}
+
 #[derive(Clone)]
 pub struct Context<'a> {
     pub gateway: &'a Gateway<'a>,
+    pub data: &'a Data,
     pub fragments: HashMap<&'a str, FragmentDefinition<'a, String>>,
     pub payload: &'a Payload,
     pub variable_definitions: Vec<VariableDefinition<'a, String>>,
@@ -17,6 +34,7 @@ pub struct Context<'a> {
 impl<'a> Context<'a> {
     pub fn new(
         gateway: &'a Gateway,
+        data: &'a Data,
         payload: &'a Payload,
         query: &'a Document<'a, String>,
         variable_definitions: Vec<VariableDefinition<'a, String>>,
@@ -31,6 +49,7 @@ impl<'a> Context<'a> {
 
         Context {
             gateway,
+            data,
             fragments,
             payload,
             variable_definitions,

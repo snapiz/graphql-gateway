@@ -2,7 +2,7 @@ mod common;
 
 use common::{account, inventory, inventory_updated, product, review};
 use futures_await_test::async_test;
-use graphql_gateway::{Payload, Response};
+use graphql_gateway::{Data, Payload, Response};
 use serde_json::json;
 
 #[async_test]
@@ -20,6 +20,7 @@ async fn poll() {
 
     let res = graphql_gateway::execute(
         &gateway,
+        &Data::default(),
         &Payload {
             query: r#"
                 query {
@@ -56,6 +57,7 @@ async fn poll() {
     assert_eq!(
         graphql_gateway::execute(
             &gateway,
+            &Data::default(),
             &Payload {
                 query: r#"
                     query {
@@ -84,6 +86,7 @@ async fn poll() {
 
     let res = graphql_gateway::execute(
         &gateway,
+        &Data::default(),
         &Payload {
             query: r#"
                 query {
@@ -118,6 +121,7 @@ async fn poll() {
     assert_eq!(
         graphql_gateway::execute(
             &gateway,
+            &Data::default(),
             &Payload {
                 query: r#"
                     query {
@@ -146,6 +150,7 @@ async fn poll() {
 
     let res = graphql_gateway::execute(
         &gateway,
+        &Data::default(),
         &Payload {
             query: r#"
                 query {

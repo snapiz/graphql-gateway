@@ -2,7 +2,7 @@ mod common;
 
 use common::{account, inventory, product, review};
 use futures_await_test::async_test;
-use graphql_gateway::Payload;
+use graphql_gateway::{Data, Payload};
 use serde_json::json;
 
 #[async_test]
@@ -19,6 +19,7 @@ async fn query_executor() {
     assert_eq!(
         graphql_gateway::execute(
             &gateway,
+            &Data::default(),
             &Payload {
                 query: r#"
                     {
@@ -58,6 +59,7 @@ async fn query_executors() {
     assert_eq!(
         graphql_gateway::execute(
             &gateway,
+            &Data::default(),
             &Payload {
                 query: r#"
                     query {
@@ -137,6 +139,7 @@ async fn query_batch() {
     assert_eq!(
         graphql_gateway::execute(
             &gateway,
+            &Data::default(),
             &Payload {
                 query: r#"
                     query {
@@ -226,6 +229,7 @@ async fn query_node() {
     assert_eq!(
         graphql_gateway::execute(
             &gateway,
+            &Data::default(),
             &Payload {
                 query: r#"
                     query {
@@ -299,6 +303,7 @@ async fn query_nodes_batch() {
     assert_eq!(
         graphql_gateway::execute(
             &gateway,
+            &Data::default(),
             &Payload {
                 query: r#"
                     query {
@@ -372,6 +377,7 @@ async fn query_nodes() {
     assert_eq!(
         graphql_gateway::execute(
             &gateway,
+            &Data::default(),
             &Payload {
                 query: r#"
                     query {
@@ -425,6 +431,7 @@ async fn query_alias() {
     assert_eq!(
         graphql_gateway::execute(
             &gateway,
+            &Data::default(),
             &Payload {
                 query: r#"
                     query {
@@ -520,6 +527,7 @@ async fn query_variables() {
     assert_eq!(
         graphql_gateway::execute(
             &gateway,
+            &Data::default(),
             &Payload {
                 query: r#"
                     query NodeQuery ($userId: ID!, $reviewId: ID!, $name: String!) {
@@ -622,6 +630,7 @@ async fn query_fragment_spread() {
     assert_eq!(
         graphql_gateway::execute(
             &gateway,
+            &Data::default(),
             &Payload {
                 query: r#"
                     query FragmentSpreadQuery ($userId: ID!) {

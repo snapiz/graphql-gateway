@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use serde_json::{Map, Value};
 
+use super::context::Data;
 use super::error::{Error, Result};
 use super::graphql::Payload;
 use super::schema::Schema;
@@ -111,10 +112,11 @@ pub const INTROSPECTION_QUERY: &str = r#"
 pub trait Executor: Send + Sync {
   fn name(&self) -> String;
 
-  async fn execute(&self, payload: &Payload) -> Result<Value>;
+  async fn execute(&self, data: &Data, payload: &Payload) -> Result<Value>;
 
   async fn get_data(
     &self,
+    data: &Data,
     query: String,
     variables: Option<Value>,
     operation_name: Option<String>,
@@ -125,7 +127,7 @@ pub trait Executor: Send + Sync {
       operation_name,
     };
 
-    let res = self.execute(payload).await?;
+    let res = self.execute(data, payload).await?;
 
     if res.get("errors").is_some() {
       return Err(Error::Executor(res));
@@ -144,11 +146,14 @@ pub trait Executor: Send + Sync {
 
   async fn get_schema(&self) -> Result<Schema> {
     let res = self
-      .execute(&Payload {
-        query: INTROSPECTION_QUERY.to_owned(),
-        operation_name: Some("IntrospectionQuery".to_owned()),
-        variables: None,
-      })
+      .execute(
+        &Data::default(),
+        &Payload {
+          query: INTROSPECTION_QUERY.to_owned(),
+          operation_name: Some("IntrospectionQuery".to_owned()),
+          variables: None,
+        },
+      )
       .await?;
 
     if res.get("errors").is_some() {
