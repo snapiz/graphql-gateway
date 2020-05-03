@@ -317,7 +317,7 @@ pub async fn combine<'a>(schemas: &[Schema]) -> Result<Schema> {
     }
   }
 
-  let mutation_type = types.get("Mutation").map(|_| Type {
+  let mutation_type = types.get("ObjectMutation").map(|_| Type {
     kind: TypeKind::Object,
     name: Some("Mutation".to_owned()),
     ..Type::default()

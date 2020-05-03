@@ -35,18 +35,17 @@ async fn introspection() {
         })
     );
 
-    assert_eq!(res["__schema"]["mutationType"], Value::Null);
+    assert_eq!(
+        res["__schema"]["mutationType"],
+        json!({
+            "kind": "OBJECT",
+            "name": "Mutation"
+        })
+    );
+
     assert_eq!(res["__schema"]["subscriptionType"], Value::Null);
 
     let schema: Schema = serde_json::from_value(res["__schema"].clone()).unwrap();
-
-    assert_eq!(
-        schema
-            .types
-            .iter()
-            .any(|t| t.kind == TypeKind::Object && t.name == Some("Mutation".to_owned())),
-        false
-    );
 
     assert_eq!(
         schema.types.iter().any(|t| t.kind == TypeKind::Object
@@ -62,6 +61,23 @@ async fn introspection() {
                 })
                 .count()
                 == 5),
+        true
+    );
+
+    assert_eq!(
+        schema.types.iter().any(|t| t.kind == TypeKind::Object
+            && t.name == Some("Mutation".to_owned())
+            && t.fields.as_ref().unwrap().len() == 1
+            && t.fields
+                .as_ref()
+                .unwrap()
+                .iter()
+                .filter(|field| match field.name.as_ref() {
+                    "addProduct" => true,
+                    _ => false,
+                })
+                .count()
+                == 1),
         true
     );
 

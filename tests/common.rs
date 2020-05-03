@@ -359,7 +359,7 @@ pub mod inventory_updated {
 }
 
 pub mod product {
-    use async_graphql::{EmptyMutation, EmptySubscription, ID};
+    use async_graphql::{EmptySubscription, ID};
 
     use super::TestExecutor;
 
@@ -434,8 +434,23 @@ pub mod product {
         }
     }
 
+    pub struct Mutation;
+
+    #[async_graphql::Object]
+    impl Mutation {
+        #[field]
+        async fn add_product(&self, id: ID) -> Option<&Product> {
+            let (_, id) = match super::from_global_id(&id) {
+                Ok((node_type, id)) => (node_type, id),
+                _ => return None,
+            };
+
+            PRODUCTS.get(id)
+        }
+    }
+
     lazy_static::lazy_static! {
-        pub static ref EXECUTOR: TestExecutor<'static, Query, EmptyMutation, EmptySubscription> = TestExecutor::new("product", Query {}, EmptyMutation, EmptySubscription);
+        pub static ref EXECUTOR: TestExecutor<'static, Query, Mutation, EmptySubscription> = TestExecutor::new("product", Query {}, Mutation, EmptySubscription);
     }
 }
 
