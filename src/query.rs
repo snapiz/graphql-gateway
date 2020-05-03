@@ -423,7 +423,7 @@ pub fn resolve<'a>(
                     };
 
                     let selection_data = match field_data {
-                        Value::Null => continue,
+                        Value::Null => field_data,
                         _ => {
                             resolve(ctx, field_type, field.selection_set.items, field_data).await?
                         }
