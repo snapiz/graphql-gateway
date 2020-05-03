@@ -21,7 +21,7 @@ async fn query_executor() {
             &gateway,
             &Payload {
                 query: r#"
-                    query {
+                    {
                         products {
                             id
                             name

@@ -86,6 +86,17 @@ pub async fn execute(gateway: &Gateway<'_>, payload: &Payload) -> Result<Value> 
                     )
                     .await;
                 }
+                OperationDefinition::SelectionSet(selection_set) => {
+                    let ctx = &Context::new(gateway, payload, &query, vec![]);
+                    let object_type = match ctx.object_type("Query") {
+                        Some(object_type) => object_type,
+                        _ => return Err(Error::Custom("Schema must have Query type".to_owned())),
+                    };
+                    let data = query::query(ctx, object_type, selection_set.items.clone()).await?;
+
+                    return query::resolve(ctx, object_type, selection_set.items.clone(), data)
+                        .await;
+                }
                 _ => {}
             }
         };

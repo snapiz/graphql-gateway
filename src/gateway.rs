@@ -5,6 +5,7 @@ use super::executor::Executor;
 use super::schema;
 use super::schema::{Field, Schema, Type};
 
+#[derive(Clone)]
 pub struct Gateway<'a> {
     pub executors: HashMap<String, &'a (dyn Executor + 'a)>,
     pub schemas: HashMap<String, Schema>,
