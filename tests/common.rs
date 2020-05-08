@@ -93,7 +93,7 @@ where
         self.0.to_owned()
     }
 
-    async fn execute(&self, _: &Data, payload: &Payload) -> graphql_gateway::Result<Value> {
+    async fn query(&self, _: &Data, payload: &Payload) -> graphql_gateway::Result<Value> {
         let mut builder = QueryBuilder::new(&payload.query);
 
         if let Some(operation_name) = &payload.operation_name {

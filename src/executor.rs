@@ -112,9 +112,9 @@ pub const INTROSPECTION_QUERY: &str = r#"
 pub trait Executor: Send + Sync {
   fn name(&self) -> String;
 
-  async fn execute(&self, data: &Data, payload: &Payload) -> Result<Value>;
+  async fn query(&self, data: &Data, payload: &Payload) -> Result<Value>;
 
-  async fn get_data(
+  async fn execute(
     &self,
     data: &Data,
     query: String,
@@ -127,16 +127,13 @@ pub trait Executor: Send + Sync {
       operation_name,
     };
 
-    let res = self.execute(data, payload).await?;
+    let res = self.query(data, payload).await?;
 
     if res.get("errors").is_some() {
       return Err(Error::Executor(res));
     }
 
-    let data = match res.get("data") {
-      Some(data) => data,
-      _ => return Err(Error::InvalidExecutorResponse),
-    };
+    let data = res.get("data").ok_or(Error::InvalidExecutorResponse)?;
 
     match data {
       Value::Object(values) => Ok(values.clone()),
@@ -146,7 +143,7 @@ pub trait Executor: Send + Sync {
 
   async fn get_schema(&self) -> Result<Schema> {
     let res = self
-      .execute(
+      .query(
         &Data::default(),
         &Payload {
           query: INTROSPECTION_QUERY.to_owned(),

@@ -610,7 +610,7 @@ pub async fn query<'a>(
         let query = Document { definitions };
         let query = query.to_string();
 
-        futures.push(executor.get_data(
+        futures.push(executor.execute(
             ctx.data,
             query,
             ctx.payload.variables.clone(),
@@ -920,7 +920,7 @@ pub async fn query_node<'a>(
             variables.insert("id".to_owned(), ids[0].clone());
         };
 
-        futures.push(executor.get_data(
+        futures.push(executor.execute(
             ctx.data,
             query,
             Some(variables.into()),
