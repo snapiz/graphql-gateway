@@ -4,6 +4,8 @@ use serde_json::error::Error as JsonError;
 use std::convert::From;
 use std::fmt::Debug;
 
+use super::schema::DuplicateObjectField;
+
 #[derive(Debug, Error)]
 pub enum QueryError {
     #[error("Not supported.")]
@@ -15,8 +17,11 @@ pub enum QueryError {
     #[error("Unknown fragment \"{name}\".")]
     UnknownFragment { name: String },
 
-    #[error("Missing type condition on inline fragment \"{name}\".")]
-    MissingTypeConditionInlineFragment { name: String },
+    #[error("Missing type condition on inline fragment.")]
+    MissingTypeConditionInlineFragment,
+
+    #[error("Schema is not configured for queries.")]
+    NotConfiguredQueries,
 
     #[error("Schema is not configured for mutations.")]
     NotConfiguredMutations,
@@ -48,8 +53,14 @@ pub enum Error {
     #[error("Invalid executor response")]
     InvalidExecutorResponse,
 
+    #[error("Missing field id on {0}")]
+    MissingFieldId(String),
+
     #[error("Query error.")]
     Query(Vec<GraphQLError>),
+
+    #[error("Duplicate object fields error.")]
+    DuplicateObjectFields(Vec<DuplicateObjectField>),
 }
 
 impl From<JsonError> for Error {

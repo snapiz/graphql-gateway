@@ -1,21 +1,28 @@
-use graphql_parser::query::{Definition, Document, FragmentDefinition, VariableDefinition};
+use fnv::FnvHashMap;
+use graphql_parser::query::{FragmentDefinition, VariableDefinition};
+use serde_json::Value;
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
 
 use super::executor::Executor;
-use super::gateway::Gateway;
-use super::graphql::Payload;
-use super::schema::{Field, Type};
+use super::introspection::{Field, Type};
+use super::schema::Schema;
 
 #[derive(Default)]
-pub struct Data(HashMap<TypeId, Box<dyn Any + Send + Sync>>);
+pub struct Data(FnvHashMap<TypeId, Box<dyn Any + Sync + Send>>);
 
 impl Data {
+    #[allow(missing_docs)]
     pub fn insert<D: Any + Send + Sync>(&mut self, data: D) {
         self.0.insert(TypeId::of::<D>(), Box::new(data));
     }
 
-    pub fn get<D: Any + Send + Sync>(&self) -> Option<&D> {
+    pub fn get<D: Any + Send + Sync>(&self) -> &D {
+        self.get_opt::<D>()
+            .expect("The specified data type does not exist.")
+    }
+
+    pub fn get_opt<D: Any + Send + Sync>(&self) -> Option<&D> {
         self.0
             .get(&TypeId::of::<D>())
             .and_then(|d| d.downcast_ref::<D>())
@@ -24,58 +31,25 @@ impl Data {
 
 #[derive(Clone)]
 pub struct Context<'a> {
-    pub gateway: &'a Gateway<'a>,
-    pub data: &'a Data,
-    pub fragments: HashMap<&'a str, FragmentDefinition<'a, String>>,
-    pub payload: &'a Payload,
-    pub variable_definitions: Vec<VariableDefinition<'a, String>>,
+    pub schema: &'a Schema<'a>,
+    pub executors: &'a HashMap<String, Box<dyn Executor>>,
+    pub ctx_data: Option<&'a Data>,
+    pub operation_name: Option<&'a str>,
+    pub variables: Option<&'a Value>,
+    pub fragments: HashMap<String, FragmentDefinition<'a, String>>,
+    pub variable_definitions: HashMap<String, VariableDefinition<'a, String>>,
 }
 
 impl<'a> Context<'a> {
-    pub fn new(
-        gateway: &'a Gateway,
-        data: &'a Data,
-        payload: &'a Payload,
-        query: &'a Document<'a, String>,
-        variable_definitions: Vec<VariableDefinition<'a, String>>,
-    ) -> Self {
-        let mut fragments = HashMap::new();
-
-        for definition in &query.definitions {
-            if let Definition::Fragment(fragment) = definition {
-                fragments.insert(fragment.name.as_str(), fragment.clone());
-            }
-        }
-
-        Context {
-            gateway,
-            data,
-            fragments,
-            payload,
-            variable_definitions,
-        }
+    pub fn object<T: Into<String>>(&self, name: T) -> Option<&'a Type> {
+        self.schema.object(name)
     }
 
-    pub fn executor(&self, name: &str) -> Option<&dyn Executor> {
-        self.gateway
-            .executors
-            .get(name)
-            .map(|_| self.gateway.executors[name])
+    pub fn interface<T: Into<String>>(&self, name: T) -> Option<&'a Type> {
+        self.schema.interface(name)
     }
 
-    pub fn field(&self, type_name: &str, field_name: &str) -> Option<&Field> {
-        let key = format!("{}.{}", type_name, field_name);
-
-        self.gateway.fields.get(&key)
-    }
-
-    pub fn object(&self, type_name: &str, executor_name: &str) -> Option<&Type> {
-        let key = format!("{}.{}", executor_name, type_name);
-
-        self.gateway.objects.get(&key)
-    }
-
-    pub fn object_type(&self, key: &str) -> Option<&Type> {
-        self.gateway.types.get(key)
+    pub fn field<T: Into<String>>(&self, object: T, name: T) -> Option<(String, &'a Field)> {
+        self.schema.field(object, name)
     }
 }

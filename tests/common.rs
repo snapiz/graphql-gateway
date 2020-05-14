@@ -1,8 +1,11 @@
 use async_graphql::http::GQLResponse;
-use async_graphql::{ObjectType, QueryBuilder, Schema, SubscriptionType, Variables, ID};
+use async_graphql::{
+    EmptyMutation, EmptySubscription, ObjectType, QueryBuilder, Schema, SubscriptionType,
+    Variables, ID,
+};
 use async_trait::async_trait;
 use base64::DecodeError;
-use graphql_gateway::{Data, Executor, Payload};
+use graphql_gateway::{Data, Executor, Gateway};
 use serde_json::Value;
 use std::convert::From;
 use std::num::ParseIntError;
@@ -83,7 +86,7 @@ where
 }
 
 #[async_trait]
-impl<'a, Q, M, S> Executor for TestExecutor<'_, Q, M, S>
+impl<'a, Q, M, S> Executor for TestExecutor<'static, Q, M, S>
 where
     Q: ObjectType + Send + Sync + 'static,
     M: ObjectType + Send + Sync + 'static,
@@ -93,14 +96,20 @@ where
         self.0.to_owned()
     }
 
-    async fn query(&self, _: &Data, payload: &Payload) -> graphql_gateway::Result<Value> {
-        let mut builder = QueryBuilder::new(&payload.query);
+    async fn query(
+        &self,
+        _ctx: Option<&Data>,
+        query: &str,
+        operation_name: Option<&str>,
+        variables: Option<Value>,
+    ) -> graphql_gateway::Result<Value> {
+        let mut builder = QueryBuilder::new(query);
 
-        if let Some(operation_name) = &payload.operation_name {
+        if let Some(operation_name) = operation_name {
             builder = builder.operator_name(operation_name);
         }
 
-        if let Some(variables) = &payload.variables {
+        if let Some(variables) = variables {
             if let Ok(variables) = Variables::parse_from_json(variables.clone()) {
                 builder = builder.variables(variables);
             }
@@ -110,13 +119,49 @@ where
     }
 }
 
-pub mod account {
-    use async_graphql::{EmptyMutation, EmptySubscription, ID};
+pub async fn gateway<'a>() -> Gateway<'a> {
+    let account = TestExecutor::new(
+        "account",
+        account::Query {},
+        account::Mutation {},
+        EmptySubscription,
+    );
+    let inventory = TestExecutor::new(
+        "inventory",
+        inventory::Query {},
+        EmptyMutation,
+        EmptySubscription,
+    );
+    let product = TestExecutor::new(
+        "product",
+        product::Query {},
+        product::Mutation {},
+        EmptySubscription,
+    );
+    let review = TestExecutor::new("review", review::Query {}, EmptyMutation, EmptySubscription);
 
-    use super::TestExecutor;
+    Gateway::new()
+        .executor(account)
+        .executor(inventory)
+        .executor(product)
+        .executor(review)
+        .build()
+        .await
+        .unwrap()
+}
+
+pub mod account {
+    use async_graphql::ID;
+
+    #[async_graphql::Enum]
+    pub enum UserRole {
+        Admin,
+        Staff,
+        User,
+    }
 
     #[derive(Clone)]
-    pub struct User(usize, String, String);
+    pub struct User(usize, Option<String>, Option<String>, UserRole);
 
     #[async_graphql::Object]
     impl User {
@@ -126,13 +171,18 @@ pub mod account {
         }
 
         #[field]
-        async fn email(&self) -> &str {
-            &self.1
+        async fn email(&self) -> Option<&str> {
+            self.1.as_ref().map(|v| v.as_str())
         }
 
         #[field]
-        async fn username(&self) -> &str {
-            &self.2
+        async fn username(&self) -> Option<&str> {
+            self.2.as_ref().map(|v| v.as_str())
+        }
+
+        #[field]
+        async fn role(&self) -> UserRole {
+            self.3
         }
 
         #[field]
@@ -143,8 +193,8 @@ pub mod account {
 
     lazy_static::lazy_static! {
         pub static ref USERS: Vec<User> = vec![
-            User(0, "john@doe.com".to_owned(), "john".to_owned()),
-            User(1, "albert@dupont.com".to_owned(), "albert".to_owned())
+            User(0, Some("john@doe.com".to_owned()), None, UserRole::Admin),
+            User(1, None, Some("albert".to_owned()), UserRole::User)
             ];
     }
 
@@ -201,15 +251,24 @@ pub mod account {
         }
     }
 
-    lazy_static::lazy_static! {
-        pub static ref EXECUTOR: TestExecutor<'static, Query, EmptyMutation, EmptySubscription> = TestExecutor::new("account", Query {}, EmptyMutation, EmptySubscription);
+    #[async_graphql::InputObject]
+    pub struct SignInInput {
+        pub email: String,
+        pub password: String,
+    }
+
+    pub struct Mutation;
+
+    #[async_graphql::Object]
+    impl Mutation {
+        async fn sign_in(&self, _input: SignInInput) -> Option<&User> {
+            USERS.get(0)
+        }
     }
 }
 
 pub mod inventory {
-    use async_graphql::{EmptyMutation, EmptySubscription, ID};
-
-    use super::TestExecutor;
+    use async_graphql::ID;
 
     #[derive(Clone)]
     pub struct Product(usize, bool);
@@ -276,16 +335,10 @@ pub mod inventory {
                 .collect()
         }
     }
-
-    lazy_static::lazy_static! {
-        pub static ref EXECUTOR: TestExecutor<'static, Query, EmptyMutation, EmptySubscription> = TestExecutor::new("inventory", Query {}, EmptyMutation, EmptySubscription);
-    }
 }
 
 pub mod inventory_updated {
-    use async_graphql::{EmptyMutation, EmptySubscription, ID};
-
-    use super::TestExecutor;
+    use async_graphql::ID;
 
     #[derive(Clone)]
     pub struct Product(usize, bool);
@@ -352,16 +405,10 @@ pub mod inventory_updated {
                 .collect()
         }
     }
-
-    lazy_static::lazy_static! {
-        pub static ref EXECUTOR: TestExecutor<'static, Query, EmptyMutation, EmptySubscription> = TestExecutor::new("inventory", Query {}, EmptyMutation, EmptySubscription);
-    }
 }
 
 pub mod product {
-    use async_graphql::{EmptySubscription, ID};
-
-    use super::TestExecutor;
+    use async_graphql::ID;
 
     #[derive(Clone, Debug)]
     pub struct Product(usize, String);
@@ -448,16 +495,10 @@ pub mod product {
             PRODUCTS.get(id)
         }
     }
-
-    lazy_static::lazy_static! {
-        pub static ref EXECUTOR: TestExecutor<'static, Query, Mutation, EmptySubscription> = TestExecutor::new("product", Query {}, Mutation, EmptySubscription);
-    }
 }
 
 pub mod review {
-    use async_graphql::{EmptyMutation, EmptySubscription, ID};
-
-    use super::TestExecutor;
+    use async_graphql::ID;
 
     #[derive(Clone)]
     pub struct User(usize);
@@ -570,9 +611,5 @@ pub mod review {
                 })
                 .collect()
         }
-    }
-
-    lazy_static::lazy_static! {
-        pub static ref EXECUTOR: TestExecutor<'static, Query, EmptyMutation, EmptySubscription> = TestExecutor::new("review", Query {}, EmptyMutation, EmptySubscription);
     }
 }

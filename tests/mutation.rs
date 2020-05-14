@@ -1,43 +1,43 @@
 mod common;
 
-use common::{account, inventory, product, review};
 use futures_await_test::async_test;
-use graphql_gateway::{Data, Payload};
+use graphql_gateway::QueryBuilder;
 use serde_json::json;
 
 #[async_test]
-async fn mutation_executor() {
-    let account = account::EXECUTOR.clone();
-    let inventory = inventory::EXECUTOR.clone();
-    let product = product::EXECUTOR.clone();
-    let review = review::EXECUTOR.clone();
+async fn mutation() {
+    let query = QueryBuilder::new(
+        r#"
+        mutation AddProductMutation($id: ID!, $input: SignInInput!) {
+            addProduct(id: $id) {
+                id
+                name
+            }
+            signIn(input: $input) {
+                id
+                email
+                username
+            }
+        }
+        "#
+        .to_owned(),
+    )
+    .operation_name("AddProductMutation")
+    .variables(json!({
+        "id": "UHJvZHVjdDow",
+        "input": {
+            "email": "john@doe.co",
+            "password": "yep"
+        }
+    }));
 
-    let gateway = graphql_gateway::from_executors(vec![&account, &inventory, &product, &review])
-        .await
-        .unwrap();
+    let gateway = common::gateway().await;
 
     assert_eq!(
-        graphql_gateway::execute(
-            &gateway,
-            &Data::default(),
-            &Payload {
-                query: r#"
-                    mutation {
-                        addProduct(id: "UHJvZHVjdDow") {
-                            id
-                            name
-                        }
-                    }
-                "#
-                .to_owned(),
-                operation_name: None,
-                variables: None,
-            }
-        )
-        .await
-        .unwrap(),
+        query.execute(&gateway).await.unwrap(),
         json!({
-            "addProduct": { "id": "UHJvZHVjdDow", "name": "Product 1" }
+            "addProduct": { "id": "UHJvZHVjdDow", "name": "Product 1" },
+            "signIn": { "id": "VXNlcjow", "email": "john@doe.com", "username": null },
         })
     );
 }

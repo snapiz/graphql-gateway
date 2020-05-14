@@ -1,40 +1,25 @@
 mod common;
 
-use common::{account, product, review};
 use futures_await_test::async_test;
-use graphql_gateway::{Data, Error, Payload, Response};
+use graphql_gateway::{Error, QueryBuilder, Response};
 use serde_json::json;
 
 #[async_test]
 async fn error_not_supported() {
-    let account = account::EXECUTOR.clone();
-    let product = product::EXECUTOR.clone();
-    let review = review::EXECUTOR.clone();
-
-    let gateway = graphql_gateway::from_executors(vec![&account, &product, &review])
-        .await
-        .unwrap();
-
-    let res = graphql_gateway::execute(
-        &gateway,
-        &Data::default(),
-        &Payload {
-            query: r#"
-                subscription {
-                    commentAdded(repoFullName: "yes"){
-                        id
-                        content
-                    }
+    let query = QueryBuilder::new(
+        r#"
+            subscription {
+                commentAdded(repoFullName: "yes"){
+                    id
+                    content
                 }
-            "#
-            .to_owned(),
-            operation_name: None,
-            variables: None,
-        },
-    )
-    .await;
+            }
+        "#
+        .to_owned(),
+    );
 
-    let response = serde_json::to_value(Response(res)).unwrap();
+    let gateway = common::gateway().await;
+    let response = serde_json::to_value(Response(query.execute(&gateway).await)).unwrap();
 
     assert_eq!(
         response,
@@ -46,79 +31,51 @@ async fn error_not_supported() {
 
 #[async_test]
 async fn error_field_not_found() {
-    let account = account::EXECUTOR.clone();
-    let product = product::EXECUTOR.clone();
-    let review = review::EXECUTOR.clone();
-
-    let gateway = graphql_gateway::from_executors(vec![&account, &product, &review])
-        .await
-        .unwrap();
-
-    let res = graphql_gateway::execute(
-        &gateway,
-        &Data::default(),
-        &Payload {
-            query: r#"
-                query {
-                    products {
-                        id
-                        name
-                        in_stock
-                    }
+    let query = QueryBuilder::new(
+        r#"
+            query {
+                products {
+                    id
+                    name
+                    in_stock
                 }
-            "#
-            .to_owned(),
-            operation_name: None,
-            variables: None,
-        },
-    )
-    .await;
+            }
+        "#
+        .to_owned(),
+    );
 
-    let response = serde_json::to_value(Response(res)).unwrap();
+    let gateway = common::gateway().await;
+    let response = serde_json::to_value(Response(query.execute(&gateway).await)).unwrap();
 
     assert_eq!(
         response,
         json!({
-            "errors": [{ "message": "Cannot query field \"in_stock\" on type \"Product\".", "locations": [{ "line": 6, "column": 25 }] }]
+            "errors": [{ "message": "Cannot query field \"in_stock\" on type \"Product\".", "locations": [{ "line": 6, "column": 21 }] }]
         })
     );
 }
 
 #[async_test]
 async fn error_unknown_fragment() {
-    let account = account::EXECUTOR.clone();
-    let product = product::EXECUTOR.clone();
-    let review = review::EXECUTOR.clone();
-
-    let gateway = graphql_gateway::from_executors(vec![&account, &product, &review])
-        .await
-        .unwrap();
-
-    let res = graphql_gateway::execute(
-        &gateway,
-        &Data::default(),
-        &Payload {
-            query: r#"
-                query {
-                    products {
-                        id
-                        ...ProductDetail
-                    }
+    let query = QueryBuilder::new(
+        r#"
+            query {
+                products {
+                    id
+                    ...ProductDetail
                 }
-            "#
-            .to_owned(),
-            operation_name: None,
-            variables: None,
-        },
-    )
-    .await;
+            }
+        "#
+        .to_owned(),
+    );
 
-    let response = serde_json::to_value(Response(res)).unwrap();
+    let gateway = common::gateway().await;
+    let response = serde_json::to_value(Response(query.execute(&gateway).await)).unwrap();
 
     assert_eq!(
         response,
         json!({
-            "errors": [{ "message": "Unknown fragment \"ProductDetail\".", "locations": [{ "line": 5, "column": 28 }] }]
+            "errors": [{ "message": "Unknown fragment \"ProductDetail\".", "locations": [{ "line": 5, "column": 24 }] }]
         })
     );
 }

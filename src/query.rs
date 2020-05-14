@@ -1,174 +1,678 @@
 use futures::future::{BoxFuture, FutureExt};
 use graphql_parser::query::{
-    Definition, Document, Field, InlineFragment, Mutation, OperationDefinition, Query, Selection,
-    SelectionSet, Type as AstType, TypeCondition, Value as AstValue, VariableDefinition,
+    Definition, Document, Field, FragmentDefinition, InlineFragment, Mutation, OperationDefinition,
+    Query, Selection, SelectionSet, Type as AstType, TypeCondition, Value as AstValue,
+    VariableDefinition,
 };
 use graphql_parser::Pos;
 use serde_json::{Map, Value};
+use std::any::Any;
 use std::collections::HashMap;
+use std::convert::Into;
 
-use super::context::Context;
+use super::context::{Context, Data};
 use super::error::{Error, GraphQLError, QueryError, Result};
-use super::schema::{Type, TypeKind};
+use super::gateway::Gateway;
 
-struct ResolveExecutorInfo<'a> {
+#[derive(Debug, Clone)]
+struct ResolveInfo<'a> {
     selections: Vec<Selection<'a, String>>,
-    variable_definitions: HashMap<String, bool>,
-    fragments: HashMap<String, bool>,
+    fragments: HashMap<String, FragmentDefinition<'a, String>>,
+    variable_definitions: HashMap<String, VariableDefinition<'a, String>>,
 }
 
-fn resolve_executors<'a>(
-    ctx: &'a Context<'a>,
-    object_type: &'a Type,
-    selections: Vec<Selection<'a, String>>,
-    data: Value,
-) -> Result<HashMap<&'a str, bool>> {
-    let mut executors = HashMap::new();
-    let mut errors = Vec::new();
-    let object_type_name = object_type.name()?;
+pub struct QueryBuilder {
+    query_source: String,
+    operation_name: Option<String>,
+    variables: Option<Value>,
+    ctx_data: Option<Data>,
+}
 
+impl<'a> QueryBuilder {
+    pub fn new<T: Into<String>>(query: T) -> Self {
+        QueryBuilder {
+            query_source: query.into(),
+            operation_name: None,
+            variables: None,
+            ctx_data: None,
+        }
+    }
+
+    pub fn operation_name<T: Into<String>>(mut self, operation_name: T) -> Self {
+        self.operation_name = Some(operation_name.into());
+        self
+    }
+
+    pub fn variables(mut self, variables: Value) -> Self {
+        self.variables = Some(variables);
+        self
+    }
+
+    pub fn data<D: Any + Send + Sync>(mut self, data: D) -> Self {
+        if let Some(ctx_data) = &mut self.ctx_data {
+            ctx_data.insert(data);
+        } else {
+            let mut ctx_data = Data::default();
+            ctx_data.insert(data);
+            self.ctx_data = Some(ctx_data);
+        }
+        self
+    }
+
+    pub async fn execute(&'a self, gateway: &'a Gateway<'a>) -> Result<Value> {
+        let document = graphql_parser::parse_query::<String>(&self.query_source)?;
+        let fragments = document
+            .definitions
+            .iter()
+            .filter_map(|definition| match definition {
+                Definition::Fragment(fragment) => Some((fragment.name.clone(), fragment.clone())),
+                _ => None,
+            })
+            .collect::<HashMap<String, FragmentDefinition<'_, String>>>();
+
+        let (is_query, selections, variable_definitions) = document
+            .definitions
+            .iter()
+            .find_map(|definition| match definition {
+                Definition::Operation(operation) => match operation {
+                    OperationDefinition::SelectionSet(selection_set) => {
+                        Some((true, selection_set.items.clone(), vec![]))
+                    }
+                    OperationDefinition::Query(query) => Some((
+                        true,
+                        query.selection_set.items.clone(),
+                        query.variable_definitions.clone(),
+                    )),
+                    OperationDefinition::Mutation(mutation) => Some((
+                        false,
+                        mutation.selection_set.items.clone(),
+                        mutation.variable_definitions.clone(),
+                    )),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .ok_or(Error::Query(vec![GraphQLError {
+                pos: Pos::default(),
+                err: QueryError::NotSupported,
+            }]))?;
+
+        let variable_definitions = variable_definitions
+            .iter()
+            .map(|variable_definition| {
+                (
+                    variable_definition.name.clone(),
+                    variable_definition.clone(),
+                )
+            })
+            .collect();
+
+        let schema = gateway
+            .schema
+            .as_ref()
+            .expect("The document does not exist.");
+
+        let ctx = Context {
+            schema,
+            fragments,
+            variable_definitions,
+            ctx_data: self.ctx_data.as_ref(),
+            executors: &gateway.executors,
+            operation_name: self.operation_name.as_ref().map(|v| v.as_str()),
+            variables: self.variables.as_ref(),
+        };
+
+        let object_type = if is_query {
+            ctx.object("Query")
+                .ok_or(Error::Query(vec![GraphQLError {
+                    pos: Pos::default(),
+                    err: QueryError::NotConfiguredQueries,
+                }]))?
+                .name()
+        } else {
+            ctx.object("Mutation")
+                .ok_or(Error::Query(vec![GraphQLError {
+                    pos: Pos::default(),
+                    err: QueryError::NotConfiguredMutations,
+                }]))?
+                .name()
+        };
+
+        Ok(resolve(ctx.clone(), object_type.to_owned(), selections, None).await?)
+    }
+}
+
+fn resolve<'a, T: Into<String> + Send + 'a>(
+    ctx: Context<'a>,
+    object_type: T,
+    selections: Vec<Selection<'a, String>>,
+    data: Option<Value>,
+) -> BoxFuture<'a, Result<Value>> {
+    async move {
+        let object_type = object_type.into();
+
+        if let Some(data) = &data {
+            if selections.is_empty() || data.is_null() {
+                return Ok(data.clone());
+            }
+
+            if let Value::Array(values) = data {
+                if values.is_empty() {
+                    return Ok(Value::Array(vec![]));
+                }
+                let futures = values
+                    .iter()
+                    .map(|value| {
+                        resolve(
+                            ctx.clone(),
+                            object_type.clone(),
+                            selections.clone(),
+                            Some(value.clone()),
+                        )
+                    })
+                    .collect::<Vec<BoxFuture<'a, Result<Value>>>>();
+                let values = futures::future::try_join_all(futures).await?;
+                return Ok(Value::Array(values));
+            }
+        }
+
+        let query_data = query(
+            ctx.clone(),
+            object_type.clone(),
+            data.clone(),
+            selections.clone(),
+        )
+        .await?;
+
+        let mut map = Map::new();
+
+        for selection in selections {
+            match selection {
+                Selection::FragmentSpread(fragment_spread) => {
+                    let fragment = match ctx.fragments.get(&fragment_spread.fragment_name) {
+                        Some(fragment) => fragment,
+                        _ => continue,
+                    };
+
+                    let object_type = match &fragment.type_condition {
+                        TypeCondition::On(v) => v,
+                    };
+
+                    let data = resolve(
+                        ctx.clone(),
+                        object_type.clone(),
+                        fragment.selection_set.items.clone(),
+                        data.clone(),
+                    )
+                    .await?;
+
+                    if let Value::Object(object) = data {
+                        map.extend(object);
+                    }
+                }
+                Selection::InlineFragment(inline_fragment) => {
+                    let type_condition =
+                        inline_fragment
+                            .type_condition
+                            .as_ref()
+                            .ok_or(Error::Query(vec![GraphQLError {
+                                pos: inline_fragment.position,
+                                err: QueryError::MissingTypeConditionInlineFragment,
+                            }]))?;
+
+                    let object_type = match type_condition {
+                        TypeCondition::On(v) => v,
+                    };
+
+                    let data = resolve(
+                        ctx.clone(),
+                        object_type.clone(),
+                        inline_fragment.selection_set.items.clone(),
+                        data.clone(),
+                    )
+                    .await?;
+
+                    if let Value::Object(object) = data {
+                        map.extend(object);
+                    }
+                }
+                Selection::Field(field) => {
+                    let object_type = object_type.clone();
+                    let field_name = field.alias.as_ref().unwrap_or(&field.name);
+                    let field_data = if field.name == "__schema" {
+                        serde_json::to_value(&ctx.schema.schema)?
+                    } else {
+                        let data = match data.as_ref().and_then(|data| data.get(field_name)) {
+                            Some(field_data) => field_data,
+                            _ => query_data
+                                .get(field_name)
+                                .ok_or(Error::InvalidExecutorResponse)?,
+                        };
+
+                        data.clone()
+                    };
+
+                    let field_type_name = match ctx.field(object_type.as_str(), field.name.as_str())
+                    {
+                        Some((_, field)) => field.field_type().name(),
+                        _ => {
+                            if field.name == "__schema" {
+                                "__Schema"
+                            } else {
+                                map.insert(field_name.clone(), field_data.clone());
+                                continue;
+                            }
+                        }
+                    };
+
+                    let data = resolve(
+                        ctx.clone(),
+                        field_type_name,
+                        field.selection_set.items.clone(),
+                        Some(field_data.clone()),
+                    )
+                    .await?;
+
+                    map.insert(field_name.clone(), data.clone());
+                }
+            };
+        }
+        Ok(map.into())
+    }
+    .boxed()
+}
+
+fn query<'a, T: Into<String> + Send + 'a>(
+    ctx: Context<'a>,
+    object_type: T,
+    object_data: Option<Value>,
+    selections: Vec<Selection<'a, String>>,
+) -> BoxFuture<'a, Result<Value>> {
+    async move {
+        let object_type = object_type.into();
+        let first_data = object_data.as_ref().and_then(|v| match v {
+            Value::Array(values) => values.first(),
+            _ => Some(v),
+        });
+        let executors = resolve_executors(
+            ctx.clone(),
+            object_type.clone(),
+            first_data.cloned(),
+            selections.clone(),
+        );
+
+        let mut data = Map::new();
+
+        for executor in executors {
+            let result = resolve_executor(
+                ctx.clone(),
+                object_type.clone(),
+                selections.clone(),
+                executor.clone(),
+            )?;
+
+            let query_data = match object_type.as_str() {
+                "Query" | "Mutation" => {
+                    query_root(
+                        ctx.clone(),
+                        object_type.clone(),
+                        result.clone(),
+                        executor.clone(),
+                    )
+                    .await?
+                }
+                _ => {
+                    let object_data = object_data
+                        .as_ref()
+                        .ok_or(Error::MissingFieldId(object_type.clone()))?;
+
+                    query_node(
+                        ctx.clone(),
+                        object_type.clone(),
+                        object_data.clone(),
+                        result.clone(),
+                        executor.clone(),
+                    )
+                    .await?
+                }
+            };
+
+            data.extend(query_data);
+        }
+
+        return Ok(data.into());
+    }
+    .boxed()
+}
+
+async fn query_root<'a, T: Into<String>>(
+    ctx: Context<'a>,
+    object_type: T,
+    resolve_info: ResolveInfo<'a>,
+    executor: T,
+) -> Result<Map<String, Value>> {
+    let variable_definitions = resolve_info
+        .variable_definitions
+        .values()
+        .cloned()
+        .collect::<_>();
+    let executor = executor.into();
+    let object_type = object_type.into();
+    let operation = match object_type.as_str() {
+        "Query" => OperationDefinition::Query(Query {
+            position: Pos::default(),
+            name: ctx.operation_name.map(|v| v.to_owned()),
+            variable_definitions,
+            directives: vec![],
+            selection_set: SelectionSet {
+                span: (Pos::default(), Pos::default()),
+                items: resolve_info.selections,
+            },
+        }),
+        "Mutation" => OperationDefinition::Mutation(Mutation {
+            position: Pos::default(),
+            name: ctx.operation_name.map(|v| v.to_owned()),
+            variable_definitions,
+            directives: vec![],
+            selection_set: SelectionSet {
+                span: (Pos::default(), Pos::default()),
+                items: resolve_info.selections,
+            },
+        }),
+        _ => {
+            return Err(Error::Query(vec![GraphQLError {
+                pos: Pos::default(),
+                err: QueryError::NotSupported,
+            }]))
+        }
+    };
+
+    let mut definitions = resolve_info
+        .fragments
+        .into_iter()
+        .map(|(_, fragment)| Definition::Fragment(fragment))
+        .collect::<Vec<Definition<'a, String>>>();
+
+    definitions.push(Definition::Operation(operation));
+
+    let document = Document { definitions };
+    let query_source = document.to_string();
+
+    let executor = ctx
+        .executors
+        .get(&executor)
+        .ok_or(Error::UnknownExecutor(executor))?;
+
+    executor
+        .execute(
+            ctx.ctx_data,
+            query_source.as_str(),
+            ctx.operation_name,
+            ctx.variables.cloned(),
+        )
+        .await
+}
+
+async fn query_node<'a, T: Into<String>>(
+    ctx: Context<'a>,
+    object_type: T,
+    object_data: Value,
+    resolve_info: ResolveInfo<'a>,
+    executor: T,
+) -> Result<Map<String, Value>> {
+    let var_name_node_ids = "__gql_gateway_ids";
+    let object_type = object_type.into();
+    let executor = executor.into();
+
+    let field_id = resolve_info
+        .selections
+        .iter()
+        .find_map(|selection| match selection {
+            Selection::Field(field) => {
+                if field.name == "id" {
+                    Some(field.alias.as_ref().unwrap_or(&field.name).to_owned())
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        })
+        .unwrap_or("id".to_owned());
+
+    let is_array = object_data.is_array();
+    let ids = vec![object_data
+        .get(&field_id)
+        .ok_or(Error::MissingFieldId(object_type.clone()))?
+        .clone()];
+    let mut variable_definitions = resolve_info
+        .variable_definitions
+        .values()
+        .cloned()
+        .collect::<Vec<VariableDefinition<'a, String>>>();
+
+    variable_definitions.push(VariableDefinition {
+        var_type: AstType::NonNullType(Box::new(AstType::ListType(Box::new(AstType::NamedType(
+            "ID".to_owned(),
+        ))))),
+        position: Pos::default(),
+        name: var_name_node_ids.to_owned(),
+        default_value: None,
+    });
+
+    let node_items = vec![Selection::InlineFragment(InlineFragment {
+        position: Pos::default(),
+        type_condition: Some(TypeCondition::On(object_type.to_owned())),
+        directives: vec![],
+        selection_set: SelectionSet {
+            span: (Pos::default(), Pos::default()),
+            items: resolve_info.selections,
+        },
+    })];
+
+    let operation = OperationDefinition::Query(Query {
+        position: Pos::default(),
+        name: Some("NodeQuery".to_owned()),
+        variable_definitions,
+        directives: vec![],
+        selection_set: SelectionSet {
+            span: (Pos::default(), Pos::default()),
+            items: vec![Selection::Field(Field {
+                alias: None,
+                arguments: vec![(
+                    "ids".to_owned(),
+                    AstValue::Variable(var_name_node_ids.to_owned()),
+                )],
+                directives: vec![],
+                name: "nodes".to_owned(),
+                position: Pos::default(),
+                selection_set: SelectionSet {
+                    span: (Pos::default(), Pos::default()),
+                    items: node_items,
+                },
+            })],
+        },
+    });
+
+    let mut variables = Map::new();
+    variables.insert(var_name_node_ids.to_owned(), Value::Array(ids));
+
+    if let Some(ctx_variables) = ctx.variables.and_then(|variables| variables.as_object()) {
+        variables.extend(ctx_variables.clone());
+    }
+
+    let mut definitions = resolve_info
+        .fragments
+        .into_iter()
+        .map(|(_, fragment)| Definition::Fragment(fragment))
+        .collect::<Vec<Definition<'a, String>>>();
+
+    definitions.push(Definition::Operation(operation));
+
+    let document = Document { definitions };
+    let query_source = document.to_string();
+
+    let executor = ctx
+        .executors
+        .get(&executor)
+        .ok_or(Error::UnknownExecutor(executor))?;
+
+    let query_data = executor
+        .execute(
+            ctx.ctx_data,
+            query_source.as_str(),
+            Some("NodeQuery"),
+            Some(variables.into()),
+        )
+        .await?;
+
+    let nodes = query_data
+        .get("nodes")
+        .and_then(|nodes| nodes.as_array())
+        .ok_or(Error::InvalidExecutorResponse)?;
+
+    if !is_array {
+        let node = nodes
+            .get(0)
+            .and_then(|node| node.as_object())
+            .ok_or(Error::InvalidExecutorResponse)?;
+
+        return Ok(node.clone());
+    }
+    unimplemented!()
+}
+
+fn resolve_executors<'a, T: Into<String>>(
+    ctx: Context,
+    object_type: T,
+    data: Option<Value>,
+    selections: Vec<Selection<'a, String>>,
+) -> Vec<String> {
+    let mut executors = vec![];
+    let mut cache = HashMap::new();
+
+    let object_type = object_type.into();
     for selection in selections {
         match selection {
-            Selection::Field(field) => {
-                if field.name.as_str() == "__schema" {
-                    continue;
+            Selection::FragmentSpread(fragment_spread) => {
+                let fragment = match ctx.fragments.get(&fragment_spread.fragment_name) {
+                    Some(fragment) => fragment,
+                    _ => continue,
+                };
+
+                let object_type = match &fragment.type_condition {
+                    TypeCondition::On(v) => v,
+                };
+
+                let fragment_executors = resolve_executors(
+                    ctx.clone(),
+                    object_type.clone(),
+                    data.clone(),
+                    fragment.selection_set.items.clone(),
+                )
+                .into_iter()
+                .filter(|executor| cache.get(executor.as_str()).is_none())
+                .collect::<Vec<String>>();
+
+                for fragment_executor in fragment_executors {
+                    if cache.get(fragment_executor.as_str()).is_none() {
+                        cache.insert(fragment_executor.clone(), true);
+                        executors.push(fragment_executor);
+                    }
                 }
+            }
+            Selection::InlineFragment(inline_fragment) => {
+                let type_condition = match inline_fragment.type_condition.as_ref() {
+                    Some(type_condition) => type_condition,
+                    _ => continue,
+                };
 
-                let s_field = match ctx.field(object_type_name, field.name.as_str()) {
-                    Some(f) => f,
-                    _ => {
-                        let error = GraphQLError {
-                            pos: field.position,
-                            err: QueryError::FieldNotFound {
-                                name: field.name,
-                                object: object_type_name.to_owned(),
-                            },
-                        };
-                        errors.push(error);
-                        continue;
+                let object_type = match type_condition {
+                    TypeCondition::On(v) => v,
+                };
+
+                let fragment_executors = resolve_executors(
+                    ctx.clone(),
+                    object_type.clone(),
+                    data.clone(),
+                    inline_fragment.selection_set.items.clone(),
+                )
+                .into_iter()
+                .filter(|executor| cache.get(executor.as_str()).is_none())
+                .collect::<Vec<String>>();
+
+                for fragment_executor in fragment_executors {
+                    if cache.get(fragment_executor.as_str()).is_none() {
+                        cache.insert(fragment_executor.clone(), true);
+                        executors.push(fragment_executor);
                     }
-                };
-
-                let executor_name = match &s_field.executor_name {
-                    Some(name) => name.as_str(),
-                    _ => {
-                        return Err(Error::Custom(
-                            "field executor_name must be define".to_owned(),
-                        ))
-                    }
-                };
-
-                let field_type = match s_field.field_type() {
-                    Some(field_type) => field_type,
-                    _ => return Err(Error::Custom("field type must be define".to_owned())),
-                };
-
-                if field_type.kind == TypeKind::Interface {
-                    let executor_names = resolve_executors(
-                        ctx,
-                        field_type,
+                }
+            }
+            Selection::Field(field) => {
+                let object_type = object_type.clone();
+                let (field_executor, schema_field) =
+                    match ctx.field(object_type.as_str(), field.name.as_str()) {
+                        Some(field_object_type) => field_object_type,
+                        _ => continue,
+                    };
+                let field_type_name = schema_field.field_type().name();
+                if ctx.interface(field_type_name).is_some() {
+                    let field_executors = resolve_executors(
+                        ctx.clone(),
+                        field_type_name,
+                        data.clone(),
                         field.selection_set.items.clone(),
-                        Value::Null,
-                    )?;
+                    );
 
-                    for (executor_name, _) in executor_names {
-                        executors.insert(executor_name, true);
+                    for field_executor in field_executors {
+                        if cache.get(field_executor.as_str()).is_none() {
+                            cache.insert(field_executor.clone(), true);
+                            executors.push(field_executor);
+                        }
                     }
 
                     continue;
                 }
 
                 let field_name = field.alias.as_ref().unwrap_or(&field.name);
+                let field_data = data.as_ref().and_then(|data| data.get(field_name));
 
-                if data.get(field_name).is_none() {
-                    executors.insert(executor_name, true);
-                }
-            }
-            Selection::FragmentSpread(fragment) => {
-                let fragment_items = match ctx.fragments.get(fragment.fragment_name.as_str()) {
-                    Some(fragment) => fragment.selection_set.items.clone(),
-                    _ => {
-                        let error = GraphQLError {
-                            pos: fragment.position,
-                            err: QueryError::UnknownFragment {
-                                name: fragment.fragment_name,
-                            },
-                        };
-                        errors.push(error);
-                        continue;
-                    }
-                };
-
-                let executor_names =
-                    resolve_executors(ctx, object_type, fragment_items, data.clone())?;
-
-                for (executor_name, _) in executor_names {
-                    executors.insert(executor_name, true);
-                }
-            }
-            Selection::InlineFragment(fragment) => {
-                let object_type = match fragment.type_condition {
-                    Some(type_condition) => match type_condition {
-                        TypeCondition::On(name) => match ctx.object_type(&name) {
-                            Some(object_type) => object_type,
-                            _ => {
-                                let error = GraphQLError {
-                                    pos: fragment.position,
-                                    err: QueryError::MissingTypeConditionInlineFragment { name },
-                                };
-                                errors.push(error);
-                                continue;
-                            }
-                        },
-                    },
-                    _ => object_type,
-                };
-
-                let executor_names = resolve_executors(
-                    ctx,
-                    object_type,
-                    fragment.selection_set.items,
-                    data.clone(),
-                )?;
-
-                for (executor_name, _) in executor_names {
-                    executors.insert(executor_name, true);
+                if cache.get(field_executor.as_str()).is_none() && field_data.is_none() {
+                    cache.insert(field_executor.clone(), true);
+                    executors.push(field_executor);
                 }
             }
         };
     }
 
-    match errors.len() {
-        0 => Ok(executors),
-        _ => Err(Error::Query(errors)),
-    }
+    executors
 }
 
-fn resolve_executor<'a>(
-    executor_name: String,
-    ctx: &'a Context<'a>,
-    object_type: &'a Type,
+fn resolve_executor<'a, T: Into<String> + Send + 'a>(
+    ctx: Context<'a>,
+    object_type: T,
     selections: Vec<Selection<'a, String>>,
-    data: Value,
-) -> Result<ResolveExecutorInfo<'a>> {
-    let mut cache = HashMap::new();
-    let mut variable_definitions = HashMap::new();
+    executor: String,
+) -> Result<ResolveInfo<'a>> {
+    let mut items = vec![];
     let mut fragments = HashMap::new();
-    let mut items = Vec::new();
+    let mut variable_definitions = HashMap::new();
     let mut errors = Vec::new();
+    let object_type = object_type.into();
 
-    let object_type_name = object_type.name()?;
+    let has_item_id = selections.iter().any(|selection| match selection {
+        Selection::Field(field) => field.name == "id",
+        _ => false,
+    });
 
-    if ctx.field(object_type_name, "id").is_some() {
-        cache.insert("id".to_owned(), true);
+    if ctx.field(object_type.as_str(), "id").is_some() && !has_item_id {
         items.push(Selection::Field(Field {
+            position: Pos::default(),
             alias: None,
+            name: "id".to_owned(),
             arguments: vec![],
             directives: vec![],
-            name: "id".to_owned(),
-            position: Pos { line: 0, column: 0 },
             selection_set: SelectionSet {
-                span: (Pos { line: 0, column: 0 }, Pos { line: 0, column: 0 }),
+                span: (Pos::default(), Pos::default()),
                 items: vec![],
             },
         }));
@@ -176,759 +680,149 @@ fn resolve_executor<'a>(
 
     for selection in selections {
         match selection {
-            Selection::Field(field) => {
-                let s_field = match ctx.field(object_type_name, field.name.as_str()) {
-                    Some(f) => f,
-                    _ => {
-                        let error = GraphQLError {
-                            pos: field.position,
-                            err: QueryError::FieldNotFound {
-                                name: field.name,
-                                object: object_type_name.to_owned(),
-                            },
-                        };
-                        errors.push(error);
-                        continue;
-                    }
-                };
-
-                let field_type = match s_field.field_type() {
-                    Some(field_type) => field_type,
-                    _ => return Err(Error::Custom("field type must be define".to_owned())),
-                };
-
-                let field_name = field.alias.as_ref().unwrap_or(&field.name);
-
-                let field_executor_name = match &s_field.executor_name {
-                    Some(name) => name.as_str(),
-                    _ => {
-                        return Err(Error::Custom(
-                            "field executor_name must be define".to_owned(),
-                        ))
-                    }
-                };
-
-                if cache.get(field_name).is_some() {
-                    continue;
-                }
-
-                if field_type.kind == TypeKind::Interface {
-                    let mut field = field.clone();
-                    let info = resolve_executor(
-                        executor_name.to_owned(),
-                        ctx,
-                        field_type,
-                        field.selection_set.items,
-                        Value::Null,
-                    )?;
-
-                    field.selection_set.items = info.selections;
-
-                    if !field.selection_set.items.is_empty() {
-                        for (_, value) in field.arguments.clone() {
-                            if let AstValue::Variable(name) = value {
-                                variable_definitions.insert(name, true);
-                            }
-                        }
-
-                        cache.insert(field_name.to_string(), true);
-                        items.push(Selection::Field(field));
-
-                        for (key, value) in info.variable_definitions {
-                            variable_definitions.insert(key, value);
-                        }
-
-                        for (key, value) in info.fragments {
-                            fragments.insert(key, value);
-                        }
-                    }
-
-                    continue;
-                }
-
-                if data.get(field_name).is_none() && executor_name == field_executor_name {
-                    for (_, value) in field.arguments.clone() {
-                        if let AstValue::Variable(name) = value {
-                            variable_definitions.insert(name, true);
-                        }
-                    }
-
-                    let mut field = field.clone();
-                    let info = resolve_executor(
-                        executor_name.to_owned(),
-                        ctx,
-                        field_type,
-                        field.selection_set.items,
-                        data.clone(),
-                    )?;
-                    field.selection_set.items = info.selections;
-                    cache.insert(field_name.to_string(), true);
-                    items.push(Selection::Field(field));
-
-                    for (key, value) in info.variable_definitions {
-                        variable_definitions.insert(key, value);
-                    }
-
-                    for (key, value) in info.fragments {
-                        fragments.insert(key, value);
-                    }
-                }
-            }
             Selection::FragmentSpread(fragment_spread) => {
-                let fragment = match ctx.fragments.get(fragment_spread.fragment_name.as_str()) {
+                let fragment = match ctx.fragments.get(&fragment_spread.fragment_name) {
                     Some(fragment) => fragment,
                     _ => {
-                        let error = GraphQLError {
+                        errors.push(GraphQLError {
                             pos: fragment_spread.position,
                             err: QueryError::UnknownFragment {
                                 name: fragment_spread.fragment_name,
                             },
-                        };
-                        errors.push(error);
+                        });
+
                         continue;
                     }
                 };
 
-                fragments.insert(fragment_spread.fragment_name.to_owned(), true);
+                let object_type = match &fragment.type_condition {
+                    TypeCondition::On(v) => v,
+                };
+
+                let resolve_info = resolve_executor(
+                    ctx.clone(),
+                    object_type.clone(),
+                    fragment.selection_set.items.clone(),
+                    executor.clone(),
+                )?;
+
+                if resolve_info.selections.len() <= 1 {
+                    continue;
+                }
+
                 items.push(Selection::FragmentSpread(fragment_spread));
 
-                let info = resolve_executor(
-                    executor_name.to_owned(),
-                    ctx,
-                    object_type,
-                    fragment.selection_set.items.clone(),
-                    data.clone(),
-                )?;
-
-                for (key, value) in info.fragments {
-                    fragments.insert(key, value);
-                }
-            }
-            Selection::InlineFragment(mut fragment) => {
-                let (object_type_name, object_type) = match &fragment.type_condition {
-                    Some(type_condition) => match type_condition {
-                        TypeCondition::On(name) => match ctx.object_type(&name) {
-                            Some(object_type) => (name.as_str(), object_type),
-                            _ => {
-                                let error = GraphQLError {
-                                    pos: fragment.position,
-                                    err: QueryError::MissingTypeConditionInlineFragment {
-                                        name: name.to_owned(),
-                                    },
-                                };
-                                errors.push(error);
-                                continue;
-                            }
-                        },
-                    },
-                    _ => (object_type_name, object_type),
-                };
-
-                if ctx.object(&object_type_name, &executor_name).is_none() {
+                if fragments.contains_key(&fragment.name) {
                     continue;
                 }
 
-                let info = resolve_executor(
-                    executor_name.to_owned(),
-                    ctx,
-                    object_type,
-                    fragment.selection_set.items.clone(),
-                    data.clone(),
+                let mut fragment = fragment.clone();
+                fragment.selection_set.items = resolve_info.selections;
+                fragments.insert(fragment.name.clone(), fragment);
+                fragments.extend(resolve_info.fragments);
+                variable_definitions.extend(resolve_info.variable_definitions);
+            }
+            Selection::InlineFragment(inline_fragment) => {
+                let type_condition =
+                    inline_fragment
+                        .type_condition
+                        .as_ref()
+                        .ok_or(Error::Query(vec![GraphQLError {
+                            pos: inline_fragment.position,
+                            err: QueryError::MissingTypeConditionInlineFragment,
+                        }]))?;
+
+                let object_type = match type_condition {
+                    TypeCondition::On(v) => v,
+                };
+
+                let resolve_info = resolve_executor(
+                    ctx.clone(),
+                    object_type.clone(),
+                    inline_fragment.selection_set.items.clone(),
+                    executor.clone(),
                 )?;
 
-                fragment.selection_set.items = info.selections;
-                items.push(Selection::InlineFragment(fragment));
-
-                for (key, value) in info.variable_definitions {
-                    variable_definitions.insert(key, value);
+                if resolve_info.selections.len() <= 1 {
+                    continue;
                 }
 
-                for (key, value) in info.fragments {
-                    fragments.insert(key, value);
+                let mut inline_fragment = inline_fragment.clone();
+                inline_fragment.selection_set.items = resolve_info.selections;
+                fragments.extend(resolve_info.fragments);
+                variable_definitions.extend(resolve_info.variable_definitions);
+
+                items.push(Selection::InlineFragment(inline_fragment));
+            }
+            Selection::Field(field) => {
+                if field.name.as_str() == "id" {
+                    items.push(Selection::Field(field));
+                    continue;
                 }
-            }
-        };
-    }
 
-    match errors.len() {
-        0 => Ok(ResolveExecutorInfo {
-            selections: items,
-            variable_definitions,
-            fragments,
-        }),
-        _ => Err(Error::Query(errors)),
-    }
-}
-
-pub fn resolve<'a>(
-    ctx: &'a Context<'a>,
-    object_type: &'a Type,
-    selections: Vec<Selection<'a, String>>,
-    data: Value,
-) -> BoxFuture<'a, Result<Value>> {
-    async move {
-        if selections.is_empty() || data == Value::Null {
-            return Ok(data.clone());
-        }
-
-        let object_type_name = object_type.name()?;
-        let data = query_node(ctx, object_type, selections.clone(), data.clone()).await?;
-
-        if let Value::Array(values) = &data {
-            if values.is_empty() {
-                return Ok(Value::Array(vec![]));
-            }
-
-            let futures = values
-                .iter()
-                .map(|value| resolve(ctx, object_type, selections.clone(), value.clone()))
-                .collect::<Vec<BoxFuture<'a, Result<Value>>>>();
-
-            let values = futures::future::try_join_all(futures).await?;
-
-            return Ok(Value::Array(values));
-        }
-
-        let mut selections_data = Map::new();
-        let mut errors = Vec::new();
-
-        for selection in selections {
-            match selection {
-                Selection::Field(field) => {
-                    let s_field = match ctx.field(object_type_name, field.name.as_str()) {
-                        Some(f) => f,
+                let object_type = object_type.clone();
+                let (mut field_executor, schema_field) =
+                    match ctx.field(object_type.as_str(), field.name.as_str()) {
+                        Some(schema_field) => schema_field,
                         _ => {
-                            let error = GraphQLError {
+                            errors.push(GraphQLError {
                                 pos: field.position,
                                 err: QueryError::FieldNotFound {
+                                    object: object_type.into(),
                                     name: field.name,
-                                    object: object_type_name.to_owned(),
                                 },
-                            };
-                            errors.push(error);
-                            continue;
-                        }
-                    };
-
-                    let field_type = match s_field.field_type() {
-                        Some(field_type) => field_type,
-                        _ => return Err(Error::Custom("field type must be define".to_owned())),
-                    };
-
-                    let field_name = field.alias.as_ref().unwrap_or(&field.name);
-
-                    let field_data = match field.name.as_str() {
-                        "__schema" => serde_json::to_value(&ctx.gateway.schema)?,
-                        _ => data.get(field_name).cloned().unwrap_or(Value::Null),
-                    };
-
-                    let selection_data = resolve(ctx, field_type, field.selection_set.items, field_data).await?;
-                    selections_data.insert(field_name.to_owned(), selection_data);
-                }
-                Selection::FragmentSpread(fragment) => {
-                    let fragment_items = match ctx.fragments.get(fragment.fragment_name.as_str()) {
-                        Some(fragment) => fragment.selection_set.items.clone(),
-                        _ => {
-                            let error = GraphQLError {
-                                pos: fragment.position,
-                                err: QueryError::UnknownFragment {
-                                    name: fragment.fragment_name,
-                                },
-                            };
-                            errors.push(error);
-                            continue;
-                        }
-                    };
-
-                    let data = data.clone();
-                    let selection_data = resolve(ctx, object_type, fragment_items, data).await?;
-
-                    if let Value::Object(data) = selection_data {
-                        for (name, value) in data {
-                            selections_data.insert(name, value);
-                        }
-                    }
-                }
-                Selection::InlineFragment(fragment) => {
-                    let object_type = match fragment.type_condition {
-                        Some(type_condition) => match type_condition {
-                            TypeCondition::On(name) => match ctx.object_type(&name) {
-                                Some(object_type) => object_type,
-                                _ => {
-                                    let error = GraphQLError {
-                                        pos: fragment.position,
-                                        err: QueryError::MissingTypeConditionInlineFragment {
-                                            name,
-                                        },
-                                    };
-                                    errors.push(error);
-                                    continue;
-                                }
-                            },
-                        },
-                        _ => object_type,
-                    };
-
-                    let data = data.clone();
-                    let selection_data = resolve(ctx, object_type, fragment.selection_set.items, data).await?;
-
-                    if let Value::Object(data) = selection_data {
-                        for (name, value) in data {
-                            selections_data.insert(name, value);
-                        }
-                    }
-                }
-            }
-        }
-
-        match errors.len() {
-            0 => Ok(selections_data.into()),
-            _ => Err(Error::Query(errors)),
-        }
-    }
-    .boxed()
-}
-
-pub async fn query<'a>(
-    ctx: &'a Context<'a>,
-    object_type: &'a Type,
-    selections: Vec<Selection<'a, String>>,
-) -> Result<Value> {
-    let executors = resolve_executors(ctx, object_type, selections.clone(), Value::Null)?;
-    let mut futures = Vec::new();
-    let object_type_name = object_type.name()?;
-
-    for (name, _) in executors {
-        let info = resolve_executor(
-            name.to_owned().to_string(),
-            ctx,
-            object_type,
-            selections.clone(),
-            Value::Null,
-        )?;
-
-        let mut variable_definitions = info.variable_definitions;
-
-        let executor = match ctx.executor(name) {
-            Some(executor) => executor,
-            _ => return Err(Error::UnknownExecutor(name.to_owned())),
-        };
-
-        let mut definitions = Vec::new();
-        let mut errors = Vec::new();
-
-        for (fragment_name, _) in info.fragments {
-            let fragment = match ctx.fragments.get(fragment_name.as_str()) {
-                Some(fragment) => fragment,
-                _ => {
-                    let error = GraphQLError {
-                        pos: Pos { line: 0, column: 0 },
-                        err: QueryError::UnknownFragment {
-                            name: fragment_name,
-                        },
-                    };
-                    errors.push(error);
-                    continue;
-                }
-            };
-
-            let mut fragment = fragment.clone();
-
-            let object_type = match &fragment.type_condition {
-                TypeCondition::On(name) => match ctx.object_type(name) {
-                    Some(object_type) => object_type,
-                    _ => {
-                        let error = GraphQLError {
-                            pos: fragment.position,
-                            err: QueryError::MissingTypeConditionInlineFragment {
-                                name: name.to_owned(),
-                            },
-                        };
-                        errors.push(error);
-                        continue;
-                    }
-                },
-            };
-
-            let info = resolve_executor(
-                name.to_owned().to_string(),
-                ctx,
-                object_type,
-                fragment.selection_set.items.clone(),
-                Value::Null,
-            )?;
-
-            fragment.selection_set.items = info.selections;
-            definitions.push(Definition::Fragment(fragment));
-
-            for (key, value) in info.variable_definitions {
-                variable_definitions.insert(key, value);
-            }
-        }
-
-        if !errors.is_empty() {
-            return Err(Error::Query(errors));
-        }
-
-        let variable_definitions = ctx
-            .variable_definitions
-            .clone()
-            .into_iter()
-            .filter(|variable_definition| {
-                variable_definitions
-                    .get(variable_definition.name.as_str())
-                    .is_some()
-            })
-            .collect::<Vec<VariableDefinition<'a, String>>>();
-
-        let operation = match object_type_name {
-            "Query" => OperationDefinition::Query(Query {
-                position: Pos { line: 0, column: 0 },
-                name: ctx.payload.operation_name.clone(),
-                variable_definitions,
-                directives: vec![],
-                selection_set: SelectionSet {
-                    span: (Pos { line: 0, column: 0 }, Pos { line: 0, column: 0 }),
-                    items: info.selections,
-                },
-            }),
-            "Mutation" => OperationDefinition::Mutation(Mutation {
-                position: Pos { line: 0, column: 0 },
-                name: ctx.payload.operation_name.clone(),
-                variable_definitions,
-                directives: vec![],
-                selection_set: SelectionSet {
-                    span: (Pos { line: 0, column: 0 }, Pos { line: 0, column: 0 }),
-                    items: info.selections,
-                },
-            }),
-            _ => continue,
-        };
-
-        definitions.push(Definition::Operation(operation));
-
-        let query = Document { definitions };
-        let query = query.to_string();
-
-        futures.push(executor.execute(
-            ctx.data,
-            query,
-            ctx.payload.variables.clone(),
-            ctx.payload.operation_name.clone(),
-        ));
-    }
-
-    let res = futures::future::try_join_all(futures).await?;
-
-    let mut map = Map::new();
-
-    for object in res {
-        for (key, value) in object {
-            map.insert(key, value);
-        }
-    }
-
-    Ok(map.into())
-}
-
-fn combine_node_data(datas: &[Map<String, Value>], data: Value) -> Result<Value> {
-    match data.clone() {
-        Value::Object(mut object) => {
-            for data in datas {
-                let node = match data.get("node") {
-                    Some(node) => node,
-                    _ => continue,
-                };
-
-                let node = match node {
-                    Value::Object(node) => node,
-                    _ => continue,
-                };
-                for (key, value) in node {
-                    object.insert(key.to_string(), value.clone());
-                }
-            }
-
-            Ok(object.into())
-        }
-        Value::Array(values) => {
-            let mut objects = Vec::new();
-
-            for data in values.into_iter() {
-                let value = match data {
-                    Value::Object(mut object) => {
-                        for data in datas {
-                            let nodes = match data.get("nodes") {
-                                Some(node) => node,
-                                _ => continue,
-                            };
-
-                            let nodes = match nodes {
-                                Value::Array(nodes) => nodes,
-                                _ => continue,
-                            };
-
-                            let node_id = match object.get("id") {
-                                Some(node) => node,
-                                _ => continue,
-                            };
-
-                            let node = nodes.iter().find(|v| match v {
-                                Value::Object(object) => match object.get("id") {
-                                    Some(id) => id == node_id,
-                                    _ => false,
-                                },
-                                _ => false,
                             });
-
-                            let node = match node {
-                                Some(node) => node,
-                                _ => {
-                                    object = Map::new();
-
-                                    break;
-                                }
-                            };
-
-                            let node = match node {
-                                Value::Object(node) => node,
-                                _ => continue,
-                            };
-
-                            for (key, value) in node {
-                                object.insert(key.to_string(), value.clone());
-                            }
+                            continue;
                         }
-
-                        if object.is_empty() {
-                            Value::Null
-                        } else {
-                            object.into()
-                        }
-                    }
-                    _ => data,
-                };
-
-                objects.push(value);
-            }
-
-            Ok(Value::Array(objects))
-        }
-        _ => Ok(data),
-    }
-}
-
-pub async fn query_node<'a>(
-    ctx: &'a Context<'a>,
-    object_type: &'a Type,
-    selections: Vec<Selection<'a, String>>,
-    data: Value,
-) -> Result<Value> {
-    let object_type_name = object_type.name()?;
-    let first_data = match &data {
-        Value::Array(values) => match values.get(0) {
-            Some(value) => value.clone(),
-            _ => return Ok(data),
-        },
-        _ => data.clone(),
-    };
-
-    if first_data.get("id").is_none() {
-        return Ok(data);
-    }
-
-    let ids = match &data {
-        Value::Array(values) => {
-            let values = values
-                .iter()
-                .filter(|v| v["id"] != Value::Null)
-                .map(|v| v["id"].clone())
-                .collect::<Vec<Value>>();
-
-            if values.is_empty() {
-                return Ok(data.clone());
-            }
-
-            values
-        }
-        _ => match data["id"].clone() {
-            Value::String(s) => vec![Value::String(s)],
-            _ => return Ok(data),
-        },
-    };
-
-    let is_array = ids.len() > 1;
-    let executors = resolve_executors(ctx, object_type, selections.clone(), first_data.clone())?;
-    let mut futures = Vec::new();
-
-    for (name, _) in executors {
-        let info = resolve_executor(
-            name.to_owned().to_string(),
-            ctx,
-            object_type,
-            selections.clone(),
-            first_data.clone(),
-        )?;
-
-        let mut variable_definitions = info.variable_definitions;
-
-        let executor = match ctx.executor(name) {
-            Some(executor) => executor,
-            _ => return Err(Error::UnknownExecutor(name.to_owned())),
-        };
-
-        let mut definitions = Vec::new();
-        let mut errors = Vec::new();
-
-        for (fragment_name, _) in info.fragments {
-            let fragment = match ctx.fragments.get(fragment_name.as_str()) {
-                Some(fragment) => fragment,
-                _ => {
-                    let error = GraphQLError {
-                        pos: Pos { line: 0, column: 0 },
-                        err: QueryError::UnknownFragment {
-                            name: fragment_name,
-                        },
                     };
-                    errors.push(error);
+
+                let field_type_name = schema_field.field_type().name();
+
+                if ctx.interface(field_type_name).is_some() {
+                    field_executor = executor.clone();
+                }
+
+                if executor != field_executor {
                     continue;
                 }
-            };
 
-            let mut fragment = fragment.clone();
+                let field_variable_definitions = field
+                    .arguments
+                    .iter()
+                    .filter_map(|(name, argument)| match argument {
+                        AstValue::Variable(variable) => {
+                            let variable = ctx.variable_definitions.get(variable)?;
+                            Some((name.clone(), variable.clone()))
+                        }
+                        _ => None,
+                    })
+                    .collect::<HashMap<String, VariableDefinition<'a, String>>>();
 
-            let object_type = match &fragment.type_condition {
-                TypeCondition::On(name) => match ctx.object_type(&name) {
-                    Some(object_type) => object_type,
-                    _ => {
-                        let error = GraphQLError {
-                            pos: fragment.position,
-                            err: QueryError::MissingTypeConditionInlineFragment {
-                                name: name.to_owned(),
-                            },
-                        };
-                        errors.push(error);
-                        continue;
-                    }
-                },
-            };
-
-            let info = resolve_executor(
-                name.to_owned().to_string(),
-                ctx,
-                object_type,
-                fragment.selection_set.items.clone(),
-                first_data.clone(),
-            )?;
-
-            fragment.selection_set.items = info.selections;
-            definitions.push(Definition::Fragment(fragment));
-
-            for (key, value) in info.variable_definitions {
-                variable_definitions.insert(key, value);
+                variable_definitions.extend(field_variable_definitions);
+                let mut field = field.clone();
+                if !field.selection_set.items.is_empty() {
+                    let result = resolve_executor(
+                        ctx.clone(),
+                        field_type_name,
+                        field.selection_set.items.clone(),
+                        field_executor,
+                    )?;
+                    field.selection_set.items = result.selections;
+                    fragments.extend(result.fragments);
+                    variable_definitions.extend(result.variable_definitions);
+                }
+                items.push(Selection::Field(field));
             }
-        }
-
-        if !errors.is_empty() {
-            return Err(Error::Query(errors));
-        }
-
-        let (var_name, var_type, field_name) = if is_array {
-            (
-                "ids".to_owned(),
-                AstType::NonNullType(Box::new(AstType::ListType(Box::new(AstType::NamedType(
-                    "ID".to_owned(),
-                ))))),
-                "nodes".to_owned(),
-            )
-        } else {
-            (
-                "id".to_owned(),
-                AstType::NonNullType(Box::new(AstType::NamedType("ID".to_owned()))),
-                "node".to_owned(),
-            )
         };
-
-        let node_items = match object_type_name {
-            "Node" => info.selections,
-            _ => vec![Selection::InlineFragment(InlineFragment {
-                position: Pos { line: 0, column: 0 },
-                type_condition: Some(TypeCondition::On(object_type_name.to_owned())),
-                directives: vec![],
-                selection_set: SelectionSet {
-                    span: (Pos { line: 0, column: 0 }, Pos { line: 0, column: 0 }),
-                    items: info.selections,
-                },
-            })],
-        };
-
-        let mut variable_definitions = ctx
-            .variable_definitions
-            .clone()
-            .into_iter()
-            .filter(|variable_definition| {
-                variable_definitions
-                    .get(variable_definition.name.as_str())
-                    .is_some()
-            })
-            .collect::<Vec<VariableDefinition<'a, String>>>();
-
-        variable_definitions.push(VariableDefinition {
-            var_type,
-            position: Pos { line: 0, column: 0 },
-            name: var_name.to_owned(),
-            default_value: None,
-        });
-
-        let operation = OperationDefinition::Query(Query {
-            position: Pos { line: 0, column: 0 },
-            name: Some("NodeQuery".to_owned()),
-            variable_definitions,
-            directives: vec![],
-            selection_set: SelectionSet {
-                span: (Pos { line: 0, column: 0 }, Pos { line: 0, column: 0 }),
-                items: vec![Selection::Field(Field {
-                    alias: None,
-                    arguments: vec![(var_name.to_owned(), AstValue::Variable(var_name.to_owned()))],
-                    directives: vec![],
-                    name: field_name,
-                    position: Pos { line: 0, column: 0 },
-                    selection_set: SelectionSet {
-                        span: (Pos { line: 0, column: 0 }, Pos { line: 0, column: 0 }),
-                        items: node_items,
-                    },
-                })],
-            },
-        });
-
-        definitions.push(Definition::Operation(operation));
-
-        let query = Document { definitions };
-        let query = query.to_string();
-
-        let mut variables = match &ctx.payload.variables {
-            Some(payload_variables) => match payload_variables {
-                Value::Object(object) => object.clone(),
-                _ => Map::new(),
-            },
-            _ => Map::new(),
-        };
-
-        if is_array {
-            variables.insert("ids".to_owned(), Value::Array(ids.clone()));
-        } else {
-            variables.insert("id".to_owned(), ids[0].clone());
-        };
-
-        futures.push(executor.execute(
-            ctx.data,
-            query,
-            Some(variables.into()),
-            Some("NodeQuery".to_owned()),
-        ));
     }
 
-    let res = futures::future::try_join_all(futures).await?;
+    if !errors.is_empty() {
+        return Err(Error::Query(errors));
+    }
 
-    combine_node_data(&res, data)
+    Ok(ResolveInfo {
+        selections: items,
+        fragments,
+        variable_definitions,
+    })
 }

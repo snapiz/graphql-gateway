@@ -3,131 +3,28 @@ use serde_json::{Map, Value};
 
 use super::context::Data;
 use super::error::{Error, Result};
-use super::graphql::Payload;
-use super::schema::Schema;
-
-pub const INTROSPECTION_QUERY: &str = r#"
-  query IntrospectionQuery {
-    __schema {
-      queryType {
-        kind
-        name
-      }
-      mutationType {
-        kind
-        name
-      }
-      subscriptionType {
-        kind
-        name
-      }
-      types {
-        ...FullType
-      }
-      directives {
-        name
-        description
-        locations
-        args {
-          ...InputValue
-        }
-      }
-    }
-  }
-  fragment FullType on __Type {
-    kind
-    name
-    description
-    fields(includeDeprecated: true) {
-      name
-      description
-      args {
-        ...InputValue
-      }
-      type {
-        ...TypeRef
-      }
-      isDeprecated
-      deprecationReason
-    }
-    inputFields {
-      ...InputValue
-    }
-    interfaces {
-      ...TypeRef
-    }
-    enumValues(includeDeprecated: true) {
-      name
-      description
-      isDeprecated
-      deprecationReason
-    }
-    possibleTypes {
-      ...TypeRef
-    }
-  }
-  fragment InputValue on __InputValue {
-    name
-    description
-    type {
-      ...TypeRef
-    }
-    defaultValue
-  }
-  fragment TypeRef on __Type {
-    kind
-    name
-    ofType {
-      kind
-      name
-      ofType {
-        kind
-        name
-        ofType {
-          kind
-          name
-          ofType {
-            kind
-            name
-            ofType {
-              kind
-              name
-              ofType {
-                kind
-                name
-                ofType {
-                  kind
-                  name
-                }
-              }
-            }
-          }
-        }
-      }
-    }
-  }  
-"#;
+use super::introspection::{Schema, INTROSPECTION_QUERY};
 
 #[async_trait]
-pub trait Executor: Send + Sync {
+pub trait Executor: Send + Sync + CloneExecutor {
   fn name(&self) -> String;
 
-  async fn query(&self, data: &Data, payload: &Payload) -> Result<Value>;
+  async fn query(
+    &self,
+    ctx: Option<&Data>,
+    query: &str,
+    operation_name: Option<&str>,
+    variables: Option<Value>,
+  ) -> Result<Value>;
 
   async fn execute(
     &self,
-    data: &Data,
-    query: String,
+    ctx: Option<&Data>,
+    query: &str,
+    operation_name: Option<&str>,
     variables: Option<Value>,
-    operation_name: Option<String>,
   ) -> Result<Map<String, Value>> {
-    let payload = &Payload {
-      query,
-      variables,
-      operation_name,
-    };
-
-    let res = self.query(data, payload).await?;
+    let res = self.query(ctx, query, operation_name, variables).await?;
 
     if res.get("errors").is_some() {
       return Err(Error::Executor(res));
@@ -141,41 +38,33 @@ pub trait Executor: Send + Sync {
     }
   }
 
-  async fn get_schema(&self) -> Result<Schema> {
-    let res = self
-      .query(
-        &Data::default(),
-        &Payload {
-          query: INTROSPECTION_QUERY.to_owned(),
-          operation_name: Some("IntrospectionQuery".to_owned()),
-          variables: None,
-        },
-      )
+  async fn introspection<'a>(&self) -> Result<(String, Schema)> {
+    let data = self
+      .execute(None, INTROSPECTION_QUERY, Some("IntrospectionQuery"), None)
       .await?;
 
-    if res.get("errors").is_some() {
-      return Err(Error::Executor(res));
-    }
+    data
+      .get("__schema")
+      .ok_or(Error::InvalidExecutorResponse)
+      .and_then(|data| Ok((self.name(), serde_json::from_value(data.clone())?)))
+  }
+}
 
-    let data = match res.get("data") {
-      Some(data) => data,
-      _ => return Err(Error::InvalidExecutorResponse),
-    };
+pub trait CloneExecutor {
+  fn into_boxed(&self) -> Box<dyn Executor>;
+}
 
-    let data = match data {
-      Value::Object(values) => values,
-      _ => return Err(Error::InvalidExecutorResponse),
-    };
+impl<T> CloneExecutor for T
+where
+  T: Executor + Clone + 'static,
+{
+  fn into_boxed(&self) -> Box<dyn Executor> {
+    Box::new(self.clone())
+  }
+}
 
-    let data = match data.get("__schema") {
-      Some(schema) => schema.clone(),
-      _ => return Err(Error::InvalidExecutorResponse),
-    };
-
-    let mut schema: Schema = serde_json::from_value(data)?;
-
-    schema.executor_name = Some(self.name());
-
-    Ok(schema)
+impl Clone for Box<dyn Executor> {
+  fn clone(&self) -> Self {
+    self.into_boxed()
   }
 }

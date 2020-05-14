@@ -1,105 +1,56 @@
 mod common;
 
-use common::{account, inventory, product, review};
 use futures_await_test::async_test;
-use graphql_gateway::{Data, Payload};
+use graphql_gateway::QueryBuilder;
 use serde_json::json;
 
 #[async_test]
-async fn query_executor() {
-    let account = account::EXECUTOR.clone();
-    let inventory = inventory::EXECUTOR.clone();
-    let product = product::EXECUTOR.clone();
-    let review = review::EXECUTOR.clone();
-
-    let gateway = graphql_gateway::from_executors(vec![&account, &inventory, &product, &review])
-        .await
-        .unwrap();
-
-    assert_eq!(
-        graphql_gateway::execute(
-            &gateway,
-            &Data::default(),
-            &Payload {
-                query: r#"
-                    {
-                        products {
-                            id
-                            name
-                        }
-                    }
-                "#
-                .to_owned(),
-                operation_name: None,
-                variables: None,
-            }
-        )
-        .await
-        .unwrap(),
-        json!({
-            "products": [
-                { "id": "UHJvZHVjdDow", "name": "Product 1" },
-                { "id": "UHJvZHVjdDox", "name": "Product 2" }
-            ]
-        })
-    );
-}
-
-#[async_test]
-async fn query_executors() {
-    let account = account::EXECUTOR.clone();
-    let inventory = inventory::EXECUTOR.clone();
-    let product = product::EXECUTOR.clone();
-    let review = review::EXECUTOR.clone();
-
-    let gateway = graphql_gateway::from_executors(vec![&account, &inventory, &product, &review])
-        .await
-        .unwrap();
-
-    assert_eq!(
-        graphql_gateway::execute(
-            &gateway,
-            &Data::default(),
-            &Payload {
-                query: r#"
-                    query {
-                        viewer {
-                            email
+async fn query() {
+    let query = QueryBuilder::new(
+        r#"
+            query {
+                viewer {
+                    email
+                    username
+                    reviews {
+                        body
+                        author {
+                            authorId: id
                             username
-                            reviews {
-                                body
-                                author {
-                                    id
-                                    username
-                                }
-                                product {
-                                    name
-                                }
-                            }
                         }
-                        products {
-                            id
+                        product {
                             name
                         }
                     }
-                "#
-                .to_owned(),
-                operation_name: None,
-                variables: None,
+                }
+                users {
+                    userId: id
+                    email
+                    username
+                }
+                products {
+                    id
+                    productName: name
+                }
             }
-        )
-        .await
-        .unwrap(),
+        "#
+        .to_owned(),
+    );
+
+    let gateway = common::gateway().await;
+
+    assert_eq!(
+        query.execute(&gateway).await.unwrap(),
         json!({
             "viewer": {
                 "email": "john@doe.com",
-                "username": "john",
+                "username": null,
                 "reviews": [
                     {
                         "body": "Good product",
                         "author": {
-                            "id": "VXNlcjow",
-                            "username": "john"
+                            "authorId": "VXNlcjow",
+                            "username": null
                         },
                         "product": {
                             "name": "Product 1"
@@ -108,8 +59,8 @@ async fn query_executors() {
                     {
                         "body": "Bad product",
                         "author": {
-                            "id": "VXNlcjow",
-                            "username": "john"
+                            "authorId": "VXNlcjow",
+                            "username": null
                         },
                         "product": {
                             "name": "Product 2"
@@ -117,98 +68,127 @@ async fn query_executors() {
                     }
                 ]
             },
+            "users": [
+                {
+                    "userId": "VXNlcjow",
+                    "email": "john@doe.com",
+                    "username": null,
+
+                },
+                {
+                    "userId": "VXNlcjox",
+                    "email": null,
+                    "username": "albert",
+                }
+            ],
             "products": [
-                { "id": "UHJvZHVjdDow", "name": "Product 1" },
-                { "id": "UHJvZHVjdDox", "name": "Product 2" }
+                {
+                    "id": "UHJvZHVjdDow",
+                    "productName": "Product 1"
+                },
+                {
+                    "id": "UHJvZHVjdDox",
+                    "productName": "Product 2"
+                }
             ]
         })
     );
 }
 
 #[async_test]
-async fn query_batch() {
-    let account = account::EXECUTOR.clone();
-    let inventory = inventory::EXECUTOR.clone();
-    let product = product::EXECUTOR.clone();
-    let review = review::EXECUTOR.clone();
+async fn query_with_fragment() {
+    let query = QueryBuilder::new(
+        r#"
+            query {
+                users {
+                    ...User
+                }
+                products {
+                    id
+                    ...ProductInfo
+                }
+            }
+            fragment ProductInfo on Product {
+                productName: name
+            }
+            fragment User on User {
+                userId: id
+                email
+                username
+                reviews {
+                    body
+                    author {
+                        id
+                        email
+                    }
+                    product {
+                        ...ProductInfo
+                    }
+                }
+            }
+        "#
+        .to_owned(),
+    );
 
-    let gateway = graphql_gateway::from_executors(vec![&account, &inventory, &product, &review])
-        .await
-        .unwrap();
+    let gateway = common::gateway().await;
 
     assert_eq!(
-        graphql_gateway::execute(
-            &gateway,
-            &Data::default(),
-            &Payload {
-                query: r#"
-                    query {
-                        users {
-                            email
-                            username
-                            reviews {
-                                body
-                                author {
-                                    id
-                                    username
-                                }
-                                product {
-                                    name
-                                }
-                            }
-                        }
-                    }
-                "#
-                .to_owned(),
-                operation_name: None,
-                variables: None,
-            }
-        )
-        .await
-        .unwrap(),
+        query.execute(&gateway).await.unwrap(),
         json!({
             "users": [
                 {
+                    "userId": "VXNlcjow",
                     "email": "john@doe.com",
-                    "username": "john",
+                    "username": null,
                     "reviews": [
                         {
                             "body": "Good product",
                             "author": {
                                 "id": "VXNlcjow",
-                                "username": "john"
+                                "email": "john@doe.com"
                             },
                             "product": {
-                                "name": "Product 1"
+                                "productName": "Product 1"
                             }
                         },
                         {
                             "body": "Bad product",
                             "author": {
                                 "id": "VXNlcjow",
-                                "username": "john"
+                                "email": "john@doe.com"
                             },
                             "product": {
-                                "name": "Product 2"
+                                "productName": "Product 2"
                             }
                         }
                     ]
                 },
                 {
-                    "email": "albert@dupont.com",
+                    "userId": "VXNlcjox",
+                    "email": null,
                     "username": "albert",
                     "reviews": [
                         {
                             "body": "Fake description",
                             "author": {
                                 "id": "VXNlcjox",
-                                "username": "albert"
+                                "email": null
                             },
                             "product": {
-                                "name": "Product 1"
+                                "productName": "Product 1"
                             }
                         }
                     ]
+                }
+            ],
+            "products": [
+                {
+                    "id": "UHJvZHVjdDow",
+                    "productName": "Product 1"
+                },
+                {
+                    "id": "UHJvZHVjdDox",
+                    "productName": "Product 2"
                 }
             ]
         })
@@ -217,521 +197,63 @@ async fn query_batch() {
 
 #[async_test]
 async fn query_node() {
-    let account = account::EXECUTOR.clone();
-    let inventory = inventory::EXECUTOR.clone();
-    let product = product::EXECUTOR.clone();
-    let review = review::EXECUTOR.clone();
-
-    let gateway = graphql_gateway::from_executors(vec![&account, &inventory, &product, &review])
-        .await
-        .unwrap();
-
-    assert_eq!(
-        graphql_gateway::execute(
-            &gateway,
-            &Data::default(),
-            &Payload {
-                query: r#"
-                    query {
-                        node(id: "VXNlcjow") {
-                            ... on User {
-                                email
-                                username
-                                reviews {
-                                    body
-                                    author {
-                                        id
-                                        username
-                                    }
-                                    product {
-                                        name
-                                    }
-                                }
-                            }
+    let query = QueryBuilder::new(
+        r#"
+            query NodeQuery($id: ID!, $ids: [ID!]!, $name: String!) {
+                node(id: $id) {
+                    id
+                    ...on Review {
+                        body
+                        author {
+                            sayHello(name: $name)
+                        }
+                        product {
+                            id
+                            name
                         }
                     }
-                "#
-                .to_owned(),
-                operation_name: None,
-                variables: None,
+                }
+                nodes(ids: $ids) {
+                    ...on Review {
+                        body
+                    }
+                }
             }
-        )
-        .await
-        .unwrap(),
+        "#
+        .to_owned(),
+    )
+    .operation_name("NodeQuery")
+    .variables(json!({
+        "id": "UmV2aWV3OjA=",
+        "ids": ["UmV2aWV3OjA=", "UmV2aWV3OjEwMA==", "UmV2aWV3OjE="],
+        "name": "john"
+    }));
+
+    let gateway = common::gateway().await;
+
+    assert_eq!(
+        query.execute(&gateway).await.unwrap(),
         json!({
             "node": {
-                "email": "john@doe.com",
-                "username": "john",
-                "reviews": [
-                    {
-                        "body": "Good product",
-                        "author": {
-                            "id": "VXNlcjow",
-                            "username": "john"
-                        },
-                        "product": {
-                            "name": "Product 1"
-                        }
-                    },
-                    {
-                        "body": "Bad product",
-                        "author": {
-                            "id": "VXNlcjow",
-                            "username": "john"
-                        },
-                        "product": {
-                            "name": "Product 2"
-                        }
-                    }
-                ]
-            }
-        })
-    );
-}
-
-#[async_test]
-async fn query_nodes_batch() {
-    let account = account::EXECUTOR.clone();
-    let inventory = inventory::EXECUTOR.clone();
-    let product = product::EXECUTOR.clone();
-    let review = review::EXECUTOR.clone();
-
-    let gateway = graphql_gateway::from_executors(vec![&account, &inventory, &product, &review])
-        .await
-        .unwrap();
-
-    assert_eq!(
-        graphql_gateway::execute(
-            &gateway,
-            &Data::default(),
-            &Payload {
-                query: r#"
-                    query {
-                        nodes(ids: ["VXNlcjow", "VXNlcjoxMA=="]) {
-                            ... on User {
-                                email
-                                username
-                                reviews {
-                                    body
-                                    author {
-                                        id
-                                        username
-                                    }
-                                    product {
-                                        name
-                                    }
-                                }
-                            }
-                        }
-                    }
-                "#
-                .to_owned(),
-                operation_name: None,
-                variables: None,
-            }
-        )
-        .await
-        .unwrap(),
-        json!({
-            "nodes": [{
-                "email": "john@doe.com",
-                "username": "john",
-                "reviews": [
-                    {
-                        "body": "Good product",
-                        "author": {
-                            "id": "VXNlcjow",
-                            "username": "john"
-                        },
-                        "product": {
-                            "name": "Product 1"
-                        }
-                    },
-                    {
-                        "body": "Bad product",
-                        "author": {
-                            "id": "VXNlcjow",
-                            "username": "john"
-                        },
-                        "product": {
-                            "name": "Product 2"
-                        }
-                    }
-                ]
-            }, null]
-        })
-    );
-}
-
-#[async_test]
-async fn query_nodes() {
-    let account = account::EXECUTOR.clone();
-    let inventory = inventory::EXECUTOR.clone();
-    let product = product::EXECUTOR.clone();
-    let review = review::EXECUTOR.clone();
-
-    let gateway = graphql_gateway::from_executors(vec![&account, &inventory, &product, &review])
-        .await
-        .unwrap();
-
-    assert_eq!(
-        graphql_gateway::execute(
-            &gateway,
-            &Data::default(),
-            &Payload {
-                query: r#"
-                    query {
-                        nodes(ids: ["UmV2aWV3OjA=", "UmV2aWV3OjEw"]) {
-                            ... on Review {
-                                body
-                                author {
-                                    id
-                                    username
-                                }
-                                product {
-                                    name
-                                }
-                            }
-                        }
-                    }
-                "#
-                .to_owned(),
-                operation_name: None,
-                variables: None,
-            }
-        )
-        .await
-        .unwrap(),
-        json!({
-            "nodes": [{
+                "id": "UmV2aWV3OjA=",
                 "body": "Good product",
                 "author": {
-                    "id": "VXNlcjow",
-                    "username": "john"
+                    "sayHello": "Hello, john"
                 },
                 "product": {
+                    "id": "UHJvZHVjdDow",
                     "name": "Product 1"
                 }
-            }, null]
-        })
-    );
-}
-
-#[async_test]
-async fn query_alias() {
-    let account = account::EXECUTOR.clone();
-    let inventory = inventory::EXECUTOR.clone();
-    let product = product::EXECUTOR.clone();
-    let review = review::EXECUTOR.clone();
-
-    let gateway = graphql_gateway::from_executors(vec![&account, &inventory, &product, &review])
-        .await
-        .unwrap();
-
-    assert_eq!(
-        graphql_gateway::execute(
-            &gateway,
-            &Data::default(),
-            &Payload {
-                query: r#"
-                    query {
-                        user: node(id: "VXNlcjow") {
-                            ... on User {
-                                userEmail: email
-                                username
-                                reviews {
-                                    body
-                                    author {
-                                        id
-                                        username
-                                    }
-                                    product {
-                                        name
-                                    }
-                                }
-                            }
-                        }
-                        review: node(id: "UmV2aWV3OjA=") {
-                            ... on Review {
-                                body
-                                author {
-                                    id
-                                    username
-                                }
-                                product {
-                                    name
-                                }
-                            }
-                        }
-                    }
-                "#
-                .to_owned(),
-                operation_name: None,
-                variables: None,
-            }
-        )
-        .await
-        .unwrap(),
-        json!({
-            "user": {
-                "userEmail": "john@doe.com",
-                "username": "john",
-                "reviews": [
-                    {
-                        "body": "Good product",
-                        "author": {
-                            "id": "VXNlcjow",
-                            "username": "john"
-                        },
-                        "product": {
-                            "name": "Product 1"
-                        }
-                    },
-                    {
-                        "body": "Bad product",
-                        "author": {
-                            "id": "VXNlcjow",
-                            "username": "john"
-                        },
-                        "product": {
-                            "name": "Product 2"
-                        }
-                    }
-                ]
             },
-            "review": {
-                "body": "Good product",
-                "author": {
-                    "id": "VXNlcjow",
-                    "username": "john"
+            "nodes": [
+                {
+                    "body": "Good product",
                 },
-                "product": {
-                    "name": "Product 1"
+                null,
+                {
+                    "body": "Bad product",
                 }
-            }
-        })
-    );
-}
-
-#[async_test]
-async fn query_variables() {
-    let account = account::EXECUTOR.clone();
-    let inventory = inventory::EXECUTOR.clone();
-    let product = product::EXECUTOR.clone();
-    let review = review::EXECUTOR.clone();
-
-    let gateway = graphql_gateway::from_executors(vec![&account, &inventory, &product, &review])
-        .await
-        .unwrap();
-
-    assert_eq!(
-        graphql_gateway::execute(
-            &gateway,
-            &Data::default(),
-            &Payload {
-                query: r#"
-                    query NodeQuery ($userId: ID!, $reviewId: ID!, $name: String!) {
-                        user: node(id: $userId) {
-                            ... on User {
-                                userEmail: email
-                                username
-                                reviews {
-                                    body
-                                    author {
-                                        id
-                                        sayHello(name: $name)
-                                        username
-                                    }
-                                    product {
-                                        name
-                                    }
-                                }
-                            }
-                        }
-                        review: node(id: $reviewId) {
-                            ... on Review {
-                                body
-                                author {
-                                    id
-                                    username
-                                }
-                                product {
-                                    name
-                                }
-                            }
-                        }
-                    }
-                "#
-                .to_owned(),
-                operation_name: Some("NodeQuery".to_owned()),
-                variables: Some(json!({
-                    "userId": "VXNlcjow",
-                    "reviewId": "UmV2aWV3OjA=",
-                    "name": "John"
-                })),
-            }
-        )
-        .await
-        .unwrap(),
-        json!({
-            "user": {
-                "userEmail": "john@doe.com",
-                "username": "john",
-                "reviews": [
-                    {
-                        "body": "Good product",
-                        "author": {
-                            "id": "VXNlcjow",
-                            "sayHello": "Hello, John",
-                            "username": "john"
-                        },
-                        "product": {
-                            "name": "Product 1"
-                        }
-                    },
-                    {
-                        "body": "Bad product",
-                        "author": {
-                            "id": "VXNlcjow",
-                            "sayHello": "Hello, John",
-                            "username": "john"
-                        },
-                        "product": {
-                            "name": "Product 2"
-                        }
-                    }
-                ]
-            },
-            "review": {
-                "body": "Good product",
-                "author": {
-                    "id": "VXNlcjow",
-                    "username": "john"
-                },
-                "product": {
-                    "name": "Product 1"
-                }
-            }
-        })
-    );
-}
-
-#[async_test]
-async fn query_fragment_spread() {
-    let account = account::EXECUTOR.clone();
-    let inventory = inventory::EXECUTOR.clone();
-    let product = product::EXECUTOR.clone();
-    let review = review::EXECUTOR.clone();
-
-    let gateway = graphql_gateway::from_executors(vec![&account, &inventory, &product, &review])
-        .await
-        .unwrap();
-
-    assert_eq!(
-        graphql_gateway::execute(
-            &gateway,
-            &Data::default(),
-            &Payload {
-                query: r#"
-                    query FragmentSpreadQuery ($userId: ID!) {
-                        user: node(id: $userId) {
-                            ... on User {
-                                ...UserInfo
-                            }
-                        }
-                        viewer {
-                            ...UserInfo
-                        }
-                    }
-                    fragment UserInfo on User {
-                        ...Author
-                        reviews {
-                            body
-                            author {
-                                ...Author
-                            }
-                            product {
-                                name
-                            }
-                        }
-                    }
-                    fragment Author on User {
-                        id
-                        ...AuthorField
-                    }
-                    fragment AuthorField on User {
-                        email
-                        username
-                    }
-                "#
-                .to_owned(),
-                operation_name: Some("FragmentSpreadQuery".to_owned()),
-                variables: Some(json!({
-                    "userId": "VXNlcjow"
-                })),
-            }
-        )
-        .await
-        .unwrap(),
-        json!({
-            "user": {
-                "id": "VXNlcjow",
-                "email": "john@doe.com",
-                "username": "john",
-                "reviews": [
-                    {
-                        "body": "Good product",
-                        "author": {
-                            "id": "VXNlcjow",
-                            "email": "john@doe.com",
-                            "username": "john"
-                        },
-                        "product": {
-                            "name": "Product 1"
-                        }
-                    },
-                    {
-                        "body": "Bad product",
-                        "author": {
-                            "id": "VXNlcjow",
-                            "email": "john@doe.com",
-                            "username": "john"
-                        },
-                        "product": {
-                            "name": "Product 2"
-                        }
-                    }
-                ]
-            },
-            "viewer": {
-                "id": "VXNlcjow",
-                "email": "john@doe.com",
-                "username": "john",
-                "reviews": [
-                    {
-                        "body": "Good product",
-                        "author": {
-                            "id": "VXNlcjow",
-                            "email": "john@doe.com",
-                            "username": "john"
-                        },
-                        "product": {
-                            "name": "Product 1"
-                        }
-                    },
-                    {
-                        "body": "Bad product",
-                        "author": {
-                            "id": "VXNlcjow",
-                            "email": "john@doe.com",
-                            "username": "john"
-                        },
-                        "product": {
-                            "name": "Product 2"
-                        }
-                    }
-                ]
-            }
+            ]
         })
     );
 }

@@ -2,7 +2,6 @@
 extern crate thiserror;
 
 #[macro_use]
-extern crate serde_derive;
 extern crate serde;
 
 mod context;
@@ -10,105 +9,18 @@ mod error;
 mod executor;
 mod gateway;
 mod graphql;
+mod introspection;
 mod query;
 mod schema;
 
-use graphql_parser::query::{Definition, OperationDefinition};
-use graphql_parser::Pos;
-use serde_json::Value;
-
-use context::Context;
-
-pub use context::Data;
-pub use error::{Error, GraphQLError, QueryError, Result};
-pub use executor::{Executor, INTROSPECTION_QUERY};
-pub use gateway::{from_executors, Gateway};
-pub use graphql::{Payload, Response};
-pub use schema::{
-    Directive, DirectiveLocation, EnumValue, Field, InputValue, Schema, Type, TypeKind,
+pub use crate::context::Data;
+pub use crate::error::{Error, GraphQLError, QueryError, Result};
+pub use crate::executor::Executor;
+pub use crate::gateway::Gateway;
+pub use crate::graphql::{Payload, Response};
+pub use crate::introspection::{
+    Directive, DirectiveLocation, EnumValue, Field, InputValue, Schema as IntrospectionSchema,
+    Type, TypeKind, INTROSPECTION_QUERY,
 };
-
-pub async fn execute(gateway: &Gateway<'_>, data: &Data, payload: &Payload) -> Result<Value> {
-    let query = graphql_parser::parse_query::<String>(payload.query.as_str())?;
-
-    for definition in &query.definitions {
-        if let Definition::Operation(operation) = definition {
-            match operation {
-                OperationDefinition::Query(ast_query) => {
-                    let ctx = &Context::new(
-                        gateway,
-                        data,
-                        payload,
-                        &query,
-                        ast_query.variable_definitions.clone(),
-                    );
-                    let object_type = match ctx.object_type("Query") {
-                        Some(object_type) => object_type,
-                        _ => return Err(Error::Custom("Schema must have Query type".to_owned())),
-                    };
-                    let data =
-                        query::query(ctx, object_type, ast_query.selection_set.items.clone())
-                            .await?;
-
-                    return query::resolve(
-                        ctx,
-                        object_type,
-                        ast_query.selection_set.items.clone(),
-                        data,
-                    )
-                    .await;
-                }
-                OperationDefinition::Mutation(mutation) => {
-                    let ctx = &Context::new(
-                        gateway,
-                        data,
-                        payload,
-                        &query,
-                        mutation.variable_definitions.clone(),
-                    );
-                    let object_type = match ctx.object_type("Mutation") {
-                        Some(object_type) => object_type,
-                        _ => {
-                            let err = GraphQLError {
-                                pos: Pos { line: 0, column: 0 },
-                                err: QueryError::NotConfiguredMutations,
-                            };
-                            return Err(Error::Query(vec![err]));
-                        }
-                    };
-                    let mutation = mutation.clone();
-                    let root_data =
-                        query::query(ctx, object_type, mutation.selection_set.items.clone())
-                            .await?;
-
-                    return query::resolve(
-                        ctx,
-                        object_type,
-                        mutation.selection_set.items,
-                        root_data,
-                    )
-                    .await;
-                }
-                OperationDefinition::SelectionSet(selection_set) => {
-                    let ctx = &Context::new(gateway, data, payload, &query, vec![]);
-                    let object_type = match ctx.object_type("Query") {
-                        Some(object_type) => object_type,
-                        _ => return Err(Error::Custom("Schema must have Query type".to_owned())),
-                    };
-                    let data = query::query(ctx, object_type, selection_set.items.clone()).await?;
-
-                    return query::resolve(ctx, object_type, selection_set.items.clone(), data)
-                        .await;
-                }
-                _ => {}
-            }
-        };
-    }
-
-    let err = GraphQLError {
-        pos: Pos { line: 0, column: 0 },
-        err: QueryError::NotSupported,
-    };
-
-    Err(Error::Query(vec![err]))
-}
+pub use crate::query::QueryBuilder;
+pub use crate::schema::{DuplicateObjectField, Schema};

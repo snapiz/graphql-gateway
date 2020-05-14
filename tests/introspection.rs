@@ -1,32 +1,15 @@
 mod common;
 
-use common::{account, inventory, product, review};
 use futures_await_test::async_test;
-use graphql_gateway::{Data, Payload, Schema, TypeKind};
+use graphql_gateway::{IntrospectionSchema, QueryBuilder, TypeKind};
 use serde_json::{json, Value};
 
 #[async_test]
 async fn introspection() {
-    let account = account::EXECUTOR.clone();
-    let inventory = inventory::EXECUTOR.clone();
-    let product = product::EXECUTOR.clone();
-    let review = review::EXECUTOR.clone();
-
-    let gateway = graphql_gateway::from_executors(vec![&account, &inventory, &product, &review])
-        .await
-        .unwrap();
-
-    let res = graphql_gateway::execute(
-        &gateway,
-        &Data::default(),
-        &Payload {
-            query: graphql_gateway::INTROSPECTION_QUERY.to_owned(),
-            operation_name: Some("IntrospectionQuery".to_owned()),
-            variables: None,
-        },
-    )
-    .await
-    .unwrap();
+    let query = QueryBuilder::new(graphql_gateway::INTROSPECTION_QUERY.to_owned())
+        .operation_name("IntrospectionQuery");
+    let gateway = common::gateway().await;
+    let res = query.execute(&gateway).await.unwrap();
 
     assert_eq!(
         res["__schema"]["queryType"],
@@ -46,7 +29,7 @@ async fn introspection() {
 
     assert_eq!(res["__schema"]["subscriptionType"], Value::Null);
 
-    let schema: Schema = serde_json::from_value(res["__schema"].clone()).unwrap();
+    let schema: IntrospectionSchema = serde_json::from_value(res["__schema"].clone()).unwrap();
 
     assert_eq!(
         schema.types.iter().any(|t| t.kind == TypeKind::Object
@@ -68,17 +51,18 @@ async fn introspection() {
     assert_eq!(
         schema.types.iter().any(|t| t.kind == TypeKind::Object
             && t.name == Some("Mutation".to_owned())
-            && t.fields.as_ref().unwrap().len() == 1
+            && t.fields.as_ref().unwrap().len() == 2
             && t.fields
                 .as_ref()
                 .unwrap()
                 .iter()
                 .filter(|field| match field.name.as_ref() {
                     "addProduct" => true,
+                    "signIn" => true,
                     _ => false,
                 })
                 .count()
-                == 1),
+                == 2),
         true
     );
 
@@ -109,17 +93,17 @@ async fn introspection() {
     assert_eq!(
         schema.types.iter().any(|t| t.kind == TypeKind::Object
             && t.name == Some("User".to_owned())
-            && t.fields.as_ref().unwrap().len() == 5
+            && t.fields.as_ref().unwrap().len() == 6
             && t.fields
                 .as_ref()
                 .unwrap()
                 .iter()
                 .filter(|field| match field.name.as_ref() {
-                    "id" | "email" | "username" | "reviews" | "sayHello" => true,
+                    "id" | "email" | "username" | "reviews" | "sayHello" | "role" => true,
                     _ => false,
                 })
                 .count()
-                == 5),
+                == 6),
         true
     );
 
@@ -158,12 +142,19 @@ async fn introspection() {
     );
 
     assert_eq!(
-        schema
-            .directives
-            .iter()
-            .filter(|directive| directive.name == "include" || directive.name == "skip")
-            .count()
-            == 2,
+        schema.types.iter().any(|t| t.kind == TypeKind::Enum
+            && t.name == Some("UserRole".to_owned())
+            && t.enum_values.as_ref().unwrap().len() == 3
+            && t.enum_values
+                .as_ref()
+                .unwrap()
+                .iter()
+                .filter(|enum_value| match enum_value.name.as_ref() {
+                    "ADMIN" | "STAFF" | "USER" => true,
+                    _ => false,
+                })
+                .count()
+                == 3),
         true
     );
 }
