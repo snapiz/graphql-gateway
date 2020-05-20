@@ -20,8 +20,8 @@ impl<'b> Context<'_, 'b> {
         &self.gateway.schema.1
     }
 
-    pub fn executor(&self, name: &str) -> Option<&Box<dyn Executor>> {
-        self.gateway.executors.get(name)
+    pub fn executor(&self, name: &str) -> Option<&dyn Executor> {
+        self.gateway.executors.get(name).map(|e| e.as_ref())
     }
 
     pub fn object_by_kind<T: Into<String>>(&self, kind: &TypeKind, name: T) -> Option<&Type> {

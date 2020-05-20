@@ -12,7 +12,7 @@ pub struct GraphQLPayload {
 }
 
 impl GraphQLPayload {
-    pub fn into_query_builder(&self) -> QueryBuilder {
+    pub fn to_query_builder(&self) -> QueryBuilder {
         QueryBuilder {
             query_source: self.query.clone(),
             operation_name: self.operation_name.clone(),

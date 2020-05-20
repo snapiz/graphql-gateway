@@ -141,7 +141,7 @@ async fn validate() {
     );
 
     let (name, schema) = inventory_updated.introspect().await.unwrap();
-    assert_eq!(gateway.validate(name, schema).unwrap(), ());
+    assert_eq!(gateway.validate(name, schema).is_ok(), true);
 }
 
 #[async_test]

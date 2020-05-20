@@ -107,47 +107,48 @@ pub const INTROSPECTION_QUERY: &str = r#"
 
 #[async_trait]
 pub trait Executor: Send + Sync + CloneExecutor {
-    fn name(&self) -> &str;
+  fn name(&self) -> &str;
 
-    async fn execute(
-        &self,
-        data: Option<&Data>,
-        query: String,
-        operation_name: Option<String>,
-        variables: Option<Value>,
-    ) -> Result<Value, String>;
+  async fn execute(
+    &self,
+    data: Option<&Data>,
+    query: String,
+    operation_name: Option<String>,
+    variables: Option<Value>,
+  ) -> Result<Value, String>;
 
-    async fn introspect(&self) -> Result<(String, Schema), String> {
-        self.execute(
-            None,
-            INTROSPECTION_QUERY.to_owned(),
-            Some("IntrospectionQuery".to_owned()),
-            None,
-        )
-        .await?
-        .get("data")
-        .and_then(|data| data.get("__schema"))
-        .ok_or("data.__schema does not exist.".to_owned())
-        .and_then(|schema| serde_json::from_value(schema.clone()).map_err(|e| e.to_string()))
-        .map(|schema| (self.name().to_string(), schema))
-    }
+  async fn introspect(&self) -> Result<(String, Schema), String> {
+    self
+      .execute(
+        None,
+        INTROSPECTION_QUERY.to_owned(),
+        Some("IntrospectionQuery".to_owned()),
+        None,
+      )
+      .await?
+      .get("data")
+      .and_then(|data| data.get("__schema"))
+      .ok_or_else(|| "data.__schema does not exist.".to_owned())
+      .and_then(|schema| serde_json::from_value(schema.clone()).map_err(|e| e.to_string()))
+      .map(|schema| (self.name().to_string(), schema))
+  }
 }
 
 pub trait CloneExecutor {
-    fn clone_executor(&self) -> Box<dyn Executor>;
+  fn clone_executor(&self) -> Box<dyn Executor>;
 }
 
 impl<T> CloneExecutor for T
 where
-    T: Executor + Clone + 'static,
+  T: Executor + Clone + 'static,
 {
-    fn clone_executor(&self) -> Box<dyn Executor> {
-        Box::new(self.clone())
-    }
+  fn clone_executor(&self) -> Box<dyn Executor> {
+    Box::new(self.clone())
+  }
 }
 
 impl Clone for Box<dyn Executor> {
-    fn clone(&self) -> Self {
-        self.clone_executor()
-    }
+  fn clone(&self) -> Self {
+    self.clone_executor()
+  }
 }

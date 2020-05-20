@@ -7,11 +7,15 @@ use serde_json::{Error as JsonError, Value};
 use std::collections::HashMap;
 use std::fmt;
 
-#[derive(Debug)]
+#[derive(Debug, Error)]
 pub enum GatewayError {
+    #[error("Json error: {0}")]
     Json(JsonError),
+    #[error("{0}")]
     Custom(String),
+    #[error("Unknown executor \"{0}\"")]
     UnknownExecutor(String),
+    #[error("Duplicate object fields: {0:#?}")]
     DuplicateObjectFields(Vec<(String, String, String)>),
 }
 
@@ -29,7 +33,7 @@ impl From<JsonError> for GatewayError {
 
 pub type GatewayResult<T> = Result<T, GatewayError>;
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct Gateway<'a> {
     pub executors: HashMap<String, Box<dyn Executor>>,
     pub(crate) introspections: HashMap<String, Schema>,
@@ -38,15 +42,6 @@ pub struct Gateway<'a> {
 }
 
 impl<'a> Gateway<'a> {
-    pub fn new() -> Self {
-        Gateway {
-            executors: Default::default(),
-            introspections: Default::default(),
-            schema: Default::default(),
-            document: Default::default(),
-        }
-    }
-
     pub fn executor<E: Executor + 'static>(mut self, e: E) -> Self {
         self.executors.insert(e.name().to_owned(), Box::new(e));
         self
@@ -137,8 +132,10 @@ fn create_schema(schemas: &HashMap<String, Schema>) -> GatewayResult<GatewaySche
             };
 
             if let Some(possible_types) = &schema_type.possible_types {
-                let mut current_possible_types =
-                    current_type.possible_types.clone().unwrap_or(vec![]);
+                let mut current_possible_types = current_type
+                    .possible_types
+                    .clone()
+                    .unwrap_or_else(|| vec![]);
 
                 for possible_type in possible_types {
                     let possible_type_key = format!("{}.{:#?}", key.clone(), possible_type.name());
@@ -156,7 +153,7 @@ fn create_schema(schemas: &HashMap<String, Schema>) -> GatewayResult<GatewaySche
             }
 
             if let Some(fields) = &schema_type.fields {
-                let mut current_fields = current_type.fields.clone().unwrap_or(vec![]);
+                let mut current_fields = current_type.fields.clone().unwrap_or_else(|| vec![]);
 
                 for field in fields {
                     let field_key = format!("{}.{}", key, &field.name);

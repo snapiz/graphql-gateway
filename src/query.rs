@@ -109,7 +109,7 @@ impl QueryBuilder {
         self
     }
 
-    pub async fn execute<'a>(&self, gateway: &Gateway<'a>) -> QueryResult<Value> {
+    pub async fn execute(&self, gateway: &Gateway<'_>) -> QueryResult<Value> {
         let document = graphql_parser::parse_query::<String>(&self.query_source)?;
 
         let fragments = document
@@ -187,7 +187,7 @@ fn resolve<'a, 'b>(
     context: &'a Context<'a, 'b>,
     object_type: &'a Type,
     data: Value,
-    selections: &'a Vec<Selection<'a, String>>,
+    selections: &'a [Selection<'a, String>],
 ) -> BoxFuture<'a, QueryResult<Value>> {
     async move {
         if data.is_null() || selections.is_empty() {
@@ -349,13 +349,13 @@ fn resolve<'a, 'b>(
 async fn get_root_data<'a, 'b>(
     context: &'a Context<'a, 'b>,
     object_type: &'a Type,
-    selections: &'a Vec<Selection<'a, String>>,
+    selections: &'a [Selection<'a, String>],
 ) -> QueryResult<Value> {
     let mut map = Map::new();
     let executors = resolve_executors(context, object_type, None, selections)?;
 
     for executor in executors {
-        let result = resolve_executor(context, object_type, selections.clone(), executor.clone())?;
+        let result = resolve_executor(context, object_type, selections.to_vec(), executor.clone())?;
         let data = get_executor_root_data(context, object_type, result, executor).await?;
 
         merge_object(&mut map, data);
@@ -431,7 +431,7 @@ async fn get_node_data<'a, 'b>(
     context: &Context<'a, 'b>,
     object_type: &'a Type,
     data: &Value,
-    selections: &'a Vec<Selection<'a, String>>,
+    selections: &'a [Selection<'a, String>],
 ) -> QueryResult<Value> {
     if !object_type.is_node() {
         return Ok(data.clone());
@@ -451,7 +451,7 @@ async fn get_node_data<'a, 'b>(
     }
 
     for executor in executors {
-        let result = resolve_executor(context, object_type, selections.clone(), executor.clone())?;
+        let result = resolve_executor(context, object_type, selections.to_vec(), executor.clone())?;
         let node_data =
             get_executor_node_data(context, object_type, data, result, executor).await?;
 
@@ -495,7 +495,7 @@ async fn get_executor_node_data<'a, 'b, T: Into<String>>(
             }
             _ => None,
         })
-        .unwrap_or("id".to_owned());
+        .unwrap_or_else(|| "id".to_owned());
 
     let ids = match data {
         Value::Array(values) => {
@@ -505,7 +505,7 @@ async fn get_executor_node_data<'a, 'b, T: Into<String>>(
                 ids.push(
                     value
                         .get(&field_id)
-                        .ok_or(QueryError::FieldIdNotFound(object_type.name().to_owned()))?
+                        .ok_or_else(|| QueryError::FieldIdNotFound(object_type.name().to_owned()))?
                         .clone(),
                 );
             }
@@ -514,7 +514,7 @@ async fn get_executor_node_data<'a, 'b, T: Into<String>>(
         }
         _ => vec![data
             .get(&field_id)
-            .ok_or(QueryError::FieldIdNotFound(object_type.name().to_owned()))?
+            .ok_or_else(|| QueryError::FieldIdNotFound(object_type.name().to_owned()))?
             .clone()],
     };
 
@@ -621,7 +621,7 @@ fn resolve_executors<'a, 'b>(
     context: &Context<'a, 'b>,
     object_type: &Type,
     data: Option<&Value>,
-    selections: &Vec<Selection<'a, String>>,
+    selections: &[Selection<'a, String>],
 ) -> QueryResult<Vec<String>> {
     let mut executors = vec![];
     let mut cache = HashMap::new();

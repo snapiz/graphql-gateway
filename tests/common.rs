@@ -110,7 +110,7 @@ where
         }
 
         if let Some(variables) = variables {
-            if let Ok(variables) = Variables::parse_from_json(variables.clone()) {
+            if let Ok(variables) = Variables::parse_from_json(variables) {
                 builder = builder.variables(variables);
             }
         }
@@ -139,7 +139,7 @@ pub async fn gateway<'a>() -> Gateway<'a> {
         EmptySubscription,
     );
     let review = TestExecutor::new("review", review::Query {}, EmptyMutation, EmptySubscription);
-    Gateway::new()
+    Gateway::default()
         .executor(account)
         .executor(inventory)
         .executor(product)
