@@ -5,22 +5,16 @@ extern crate thiserror;
 extern crate serde;
 
 mod context;
-mod error;
+mod data;
 mod executor;
 mod gateway;
-mod graphql;
-mod introspection;
+mod http;
 mod query;
 mod schema;
 
-pub use crate::context::Data;
-pub use crate::error::{Error, GraphQLError, QueryError, Result};
-pub use crate::executor::Executor;
-pub use crate::gateway::Gateway;
-pub use crate::graphql::{Payload, Response};
-pub use crate::introspection::{
-    Directive, DirectiveLocation, EnumValue, Field, InputValue, Schema as IntrospectionSchema,
-    Type, TypeKind, INTROSPECTION_QUERY,
-};
-pub use crate::query::QueryBuilder;
-pub use crate::schema::{DuplicateObjectField, Schema};
+pub use crate::data::Data;
+pub use crate::executor::{Executor, INTROSPECTION_QUERY};
+pub use crate::gateway::{Gateway, GatewayError};
+pub use crate::http::{GraphQLPayload, GraphQLResponse};
+pub use crate::query::{QueryBuilder, QueryError};
+pub use crate::schema::{Schema, TypeKind};

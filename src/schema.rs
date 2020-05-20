@@ -1,252 +1,221 @@
-use graphql_parser::schema::{
-  Definition, Document, EnumType, EnumValue, Field, InputObjectType, InputValue, InterfaceType,
-  ObjectType, ScalarType, SchemaDefinition, Type, TypeDefinition, UnionType,
-};
-use graphql_parser::Pos;
-use std::collections::HashMap;
-use std::convert::{From, Into};
+use graphql_parser::{schema, Pos};
 use std::fmt;
 
-pub use serde_json::{Number, Value};
-
-use super::introspection;
-use super::introspection::{Schema as IntrospectionSchema, TypeKind};
-
-#[derive(Debug, Clone, Default)]
-pub struct DuplicateObjectField {
-  pub current_executor: String,
-  pub next_executor: String,
-  pub object_type: String,
-  pub field_name: String,
+#[derive(Serialize, Deserialize, Clone, Default, Debug)]
+pub struct Schema {
+  pub description: Option<String>,
+  pub types: Vec<Type>,
+  #[serde(rename = "queryType")]
+  pub query_type: Option<Type>,
+  #[serde(rename = "mutationType")]
+  pub mutation_type: Option<Type>,
+  #[serde(rename = "subscriptionType")]
+  pub subscription_type: Option<Type>,
+  pub directives: Vec<Directive>,
 }
 
-#[derive(Debug, Clone, Default)]
-pub struct Schema<'a> {
-  pub schema: IntrospectionSchema,
-  pub document: Document<'a, String>,
-  pub types_by_name: HashMap<String, usize>,
-  pub type_fields_by_name: HashMap<String, (String, usize)>,
-  pub duplicate_object_fields: Vec<DuplicateObjectField>,
+#[derive(Serialize, Deserialize, Clone, Default, Debug)]
+pub struct Type {
+  pub kind: TypeKind,
+  pub name: Option<String>,
+  pub description: Option<String>,
+  pub fields: Option<Vec<Field>>,
+  pub interfaces: Option<Vec<Type>>,
+  #[serde(rename = "possibleTypes")]
+  pub possible_types: Option<Vec<Type>>,
+  #[serde(rename = "enumValues")]
+  pub enum_values: Option<Vec<EnumValue>>,
+  #[serde(rename = "inputFields")]
+  pub input_fields: Option<Vec<InputValue>>,
+  #[serde(rename = "ofType")]
+  pub of_type: Option<Box<Type>>,
 }
 
-impl<'a> Schema<'a> {
-  pub fn object_by_kind<T: Into<String>>(
-    &self,
-    kind: TypeKind,
-    name: T,
-  ) -> Option<&introspection::Type> {
+impl Type {
+  pub fn name(&self) -> &str {
+    self.name.as_ref().expect("Type name does not exist.")
+  }
+
+  pub fn of_type(&self) -> &Type {
     self
-      .types_by_name
-      .get(&format!("{:?}.{}", kind, name.into()))
-      .and_then(|&i| self.schema.types.get(i))
+      .of_type
+      .as_ref()
+      .expect("Type of_type does not exist.")
+      .as_ref()
   }
 
-  pub fn object<T: Into<String>>(&self, name: T) -> Option<&introspection::Type> {
-    self.object_by_kind(TypeKind::Object, name)
+  pub fn is_interface(&self) -> bool {
+    self.kind == TypeKind::Interface
   }
 
-  pub fn interface<T: Into<String>>(&self, name: T) -> Option<&introspection::Type> {
-    self.object_by_kind(TypeKind::Interface, name)
-  }
-
-  pub fn field<T: Into<String>>(
-    &self,
-    object: T,
-    name: T,
-  ) -> Option<(String, &introspection::Field)> {
-    let object_name = object.into();
-    let fields = self
-      .object(object_name.clone())
-      .and_then(|object| object.fields.as_ref())?;
-
-    self
-      .type_fields_by_name
-      .get(&format!(
-        "{:?}.{}.{}",
-        TypeKind::Object,
-        object_name,
-        name.into()
-      ))
-      .and_then(|(name, i)| fields.get(*i).map(|field| (name.clone(), field)))
+  pub fn is_node(&self) -> bool {
+    match self.interfaces.as_ref() {
+      Some(interfaces) => interfaces
+        .iter()
+        .any(|interface| interface.name() == "Node"),
+      _ => false,
+    }
   }
 }
 
-impl<'a> fmt::Display for Schema<'a> {
+impl fmt::Display for Type {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    write!(f, "{}", self.document)
+    write!(f, "{}.{}", self.kind, self.name())
   }
 }
 
-impl<'a> From<HashMap<String, IntrospectionSchema>> for Schema<'a> {
-  fn from(schemas: HashMap<String, IntrospectionSchema>) -> Schema<'a> {
-    let mut types = vec![];
-    let mut types_by_name = HashMap::new();
-    let mut type_fields_by_name: HashMap<String, (String, usize)> = HashMap::new();
-    let mut duplicate_object_fields = Vec::new();
-    let mut possible_types_by_name = HashMap::new();
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct Field {
+  pub name: String,
+  pub description: Option<String>,
+  pub args: Vec<InputValue>,
+  #[serde(rename = "type")]
+  pub field_type: Type,
+  #[serde(rename = "isDeprecated")]
+  pub is_deprecated: bool,
+  #[serde(rename = "deprecationReason")]
+  pub deprecation_reason: Option<String>,
+}
 
-    for (executor_name, schema) in schemas {
-      for schema_type in schema.types.iter() {
-        let key = schema_type.to_string();
-        let current_type = types_by_name.get(&key).and_then(|&i| types.get_mut(i));
+impl Field {
+  pub fn field_type(&self) -> &Type {
+    get_final_field_type(&self.field_type)
+  }
+}
 
-        let current_type = match current_type {
-          Some(current_type) => current_type,
-          _ => {
-            types_by_name.insert(key.clone(), types.len());
+impl fmt::Display for Field {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    write!(f, "{}", self.field_type().name())
+  }
+}
 
-            let mut schema_type = schema_type.clone();
-            schema_type.fields = None;
-            schema_type.possible_types = None;
+fn get_final_field_type(field_type: &Type) -> &Type {
+  match field_type.kind {
+    TypeKind::List | TypeKind::NonNull => get_final_field_type(field_type.of_type()),
+    _ => field_type,
+  }
+}
 
-            types.push(schema_type);
-            types
-              .last_mut()
-              .expect("Unexpected behavior when getting last definition")
-          }
-        };
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct InputValue {
+  pub name: String,
+  pub description: Option<String>,
+  #[serde(rename = "type")]
+  pub input_type: Type,
+  #[serde(rename = "defaultValue")]
+  pub default_value: Option<String>,
+}
 
-        if let Some(possible_types) = &schema_type.possible_types {
-          let mut current_possible_types = current_type.possible_types.clone().unwrap_or(vec![]);
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct EnumValue {
+  pub name: String,
+  pub description: Option<String>,
+  #[serde(rename = "isDeprecated")]
+  pub is_deprecated: bool,
+  #[serde(rename = "deprecationReason")]
+  pub deprecation_reason: Option<String>,
+}
 
-          for possible_type in possible_types {
-            let possible_type_key = format!("{}.{:#?}", key.clone(), possible_type.name());
+#[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
+pub enum TypeKind {
+  #[serde(rename = "SCALAR")]
+  Scalar,
+  #[serde(rename = "OBJECT")]
+  Object,
+  #[serde(rename = "INTERFACE")]
+  Interface,
+  #[serde(rename = "UNION")]
+  Union,
+  #[serde(rename = "ENUM")]
+  Enum,
+  #[serde(rename = "INPUT_OBJECT")]
+  InputObject,
+  #[serde(rename = "LIST")]
+  List,
+  #[serde(rename = "NON_NULL")]
+  NonNull,
+}
 
-            if possible_types_by_name.get(&possible_type_key).is_some() {
-              continue;
-            }
+impl Default for TypeKind {
+  fn default() -> Self {
+    TypeKind::Scalar
+  }
+}
 
-            possible_types_by_name.insert(possible_type_key.clone(), (executor_name.clone(), true));
-            current_possible_types.push(possible_type.clone());
-          }
-
-          current_type.possible_types = Some(current_possible_types);
-        }
-
-        if let Some(fields) = &schema_type.fields {
-          let mut current_fields = current_type.fields.clone().unwrap_or(vec![]);
-
-          for field in fields {
-            let field_key = format!("{}.{}", key, &field.name);
-
-            match type_fields_by_name.get(&field_key) {
-              Some((current_executor_name, _)) => {
-                let field_type = field.field_type();
-
-                if field_type.name() == "ID"
-                  || current_type.kind != TypeKind::Object
-                  || field_type.kind == TypeKind::Interface
-                  || schema_type.name().starts_with("__")
-                {
-                  continue;
-                }
-
-                duplicate_object_fields.push(DuplicateObjectField {
-                  current_executor: current_executor_name.clone(),
-                  next_executor: executor_name.clone(),
-                  object_type: key.clone(),
-                  field_name: field.name.clone(),
-                });
-              }
-              _ => {
-                type_fields_by_name.insert(
-                  field_key.clone(),
-                  (executor_name.clone(), current_fields.len()),
-                );
-                current_fields.push(field.clone());
-              }
-            }
-          }
-
-          current_type.fields = Some(current_fields);
-        }
-      }
-    }
-
-    let query_type = types_by_name
-      .get("Object.Query")
-      .map(|_| introspection::Type {
-        kind: TypeKind::Object,
-        name: Some("Query".to_owned()),
-        ..introspection::Type::default()
-      });
-
-    let mutation_type = types_by_name
-      .get("Object.Mutation")
-      .map(|_| introspection::Type {
-        kind: TypeKind::Object,
-        name: Some("Mutation".to_owned()),
-        ..introspection::Type::default()
-      });
-
-    let schema = IntrospectionSchema {
-      query_type,
-      mutation_type,
-      types,
-      ..IntrospectionSchema::default()
-    };
-
-    let document: Document<'a, String> = schema.clone().into();
-
-    Schema {
-      schema,
-      document,
-      types_by_name,
-      type_fields_by_name,
-      duplicate_object_fields,
+impl fmt::Display for TypeKind {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    match self {
+      TypeKind::Scalar => write!(f, "Scalar"),
+      TypeKind::Object => write!(f, "Object"),
+      TypeKind::Interface => write!(f, "Interface"),
+      TypeKind::Union => write!(f, "Union"),
+      TypeKind::Enum => write!(f, "Enum"),
+      TypeKind::InputObject => write!(f, "InputObject"),
+      TypeKind::List => write!(f, "List"),
+      TypeKind::NonNull => write!(f, "NonNull"),
     }
   }
 }
 
-impl<'a> Into<Document<'a, String>> for IntrospectionSchema {
-  fn into(self) -> Document<'a, String> {
-    let query = if self.types.iter().any(|t| t.name() == "Query") {
-      Some("Query".to_owned())
-    } else {
-      None
-    };
-
-    let mutation = if self.types.iter().any(|t| t.name() == "Mutation") {
-      Some("Mutation".to_owned())
-    } else {
-      None
-    };
-
-    let mut definitions = self
-      .types
-      .into_iter()
-      .filter_map(|t| {
-        if t.name().starts_with("__") {
-          None
-        } else {
-          Some(t.into())
-        }
-      })
-      .collect::<Vec<Definition<'a, String>>>();
-
-    definitions.push(Definition::SchemaDefinition(SchemaDefinition {
-      position: Pos::default(),
-      directives: vec![],
-      query,
-      mutation,
-      subscription: None,
-    }));
-
-    Document { definitions }
-  }
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct Directive {
+  pub name: String,
+  pub description: Option<String>,
+  pub locations: Vec<DirectiveLocation>,
+  pub args: Vec<InputValue>,
 }
 
-impl<'a> Into<Definition<'a, String>> for introspection::Type {
-  fn into(self) -> Definition<'a, String> {
+#[derive(Serialize, Deserialize, PartialEq, Clone, Debug)]
+pub enum DirectiveLocation {
+  #[serde(rename = "QUERY")]
+  Query,
+  #[serde(rename = "MUTATION")]
+  Mutation,
+  #[serde(rename = "SUBSCRIPTION")]
+  Subscription,
+  #[serde(rename = "FIELD")]
+  Field,
+  #[serde(rename = "FRAGMENT_DEFINITION")]
+  FragmentDefinition,
+  #[serde(rename = "FRAGMENT_SPREAD")]
+  FragmentSpread,
+  #[serde(rename = "INLINE_FRAGMENT")]
+  InlineFragment,
+  #[serde(rename = "SCHEMA")]
+  Schema,
+  #[serde(rename = "SCALAR")]
+  Scalar,
+  #[serde(rename = "OBJECT")]
+  Object,
+  #[serde(rename = "FIELD_DEFINITION")]
+  FieldDefinition,
+  #[serde(rename = "ARGUMENT_DEFINITION")]
+  ArgumentDefinition,
+  #[serde(rename = "INTERFACE")]
+  Interface,
+  #[serde(rename = "UNION")]
+  Union,
+  #[serde(rename = "ENUM")]
+  Enum,
+  #[serde(rename = "ENUM_VALUE")]
+  EnumValue,
+  #[serde(rename = "INPUT_OBJECT")]
+  InputObject,
+  #[serde(rename = "INPUT_FIELD_DEFINITION")]
+  InputFieldDefinition,
+}
+
+impl<'a> Into<schema::Definition<'a, String>> for Type {
+  fn into(self) -> schema::Definition<'a, String> {
     let name = self.name.expect("Type name does not exist.");
     let type_definition = match self.kind {
-      TypeKind::Scalar => TypeDefinition::Scalar(ScalarType {
+      TypeKind::Scalar => schema::TypeDefinition::Scalar(schema::ScalarType {
         position: Pos::default(),
         description: self.description,
         name,
         directives: vec![],
       }),
-      TypeKind::Object => TypeDefinition::Object(ObjectType {
+      TypeKind::Object => schema::TypeDefinition::Object(schema::ObjectType {
         position: Pos::default(),
         description: self.description,
         name,
@@ -264,7 +233,7 @@ impl<'a> Into<Definition<'a, String>> for introspection::Type {
           .map(|field| field.into())
           .collect(),
       }),
-      TypeKind::Interface => TypeDefinition::Interface(InterfaceType {
+      TypeKind::Interface => schema::TypeDefinition::Interface(schema::InterfaceType {
         position: Pos::default(),
         description: self.description,
         name,
@@ -276,7 +245,7 @@ impl<'a> Into<Definition<'a, String>> for introspection::Type {
           .map(|field| field.into())
           .collect(),
       }),
-      TypeKind::InputObject => TypeDefinition::InputObject(InputObjectType {
+      TypeKind::InputObject => schema::TypeDefinition::InputObject(schema::InputObjectType {
         position: Pos::default(),
         description: self.description,
         name,
@@ -288,7 +257,7 @@ impl<'a> Into<Definition<'a, String>> for introspection::Type {
           .map(|input_value| input_value.into())
           .collect(),
       }),
-      TypeKind::Enum => TypeDefinition::Enum(EnumType {
+      TypeKind::Enum => schema::TypeDefinition::Enum(schema::EnumType {
         position: Pos::default(),
         description: self.description,
         name,
@@ -300,7 +269,7 @@ impl<'a> Into<Definition<'a, String>> for introspection::Type {
           .map(|enum_value| enum_value.into())
           .collect(),
       }),
-      TypeKind::Union => TypeDefinition::Union(UnionType {
+      TypeKind::Union => schema::TypeDefinition::Union(schema::UnionType {
         position: Pos::default(),
         description: self.description,
         name,
@@ -315,13 +284,13 @@ impl<'a> Into<Definition<'a, String>> for introspection::Type {
       _ => unreachable!(),
     };
 
-    Definition::TypeDefinition(type_definition)
+    schema::Definition::TypeDefinition(type_definition)
   }
 }
 
-impl<'a> Into<Field<'a, String>> for introspection::Field {
-  fn into(self) -> Field<'a, String> {
-    Field {
+impl<'a> Into<schema::Field<'a, String>> for Field {
+  fn into(self) -> schema::Field<'a, String> {
+    schema::Field {
       position: Pos::default(),
       description: self.description,
       name: self.name,
@@ -332,9 +301,9 @@ impl<'a> Into<Field<'a, String>> for introspection::Field {
   }
 }
 
-impl<'a> Into<InputValue<'a, String>> for introspection::InputValue {
-  fn into(self) -> InputValue<'a, String> {
-    InputValue {
+impl<'a> Into<schema::InputValue<'a, String>> for InputValue {
+  fn into(self) -> schema::InputValue<'a, String> {
+    schema::InputValue {
       position: Pos::default(),
       description: self.description,
       name: self.name,
@@ -345,19 +314,19 @@ impl<'a> Into<InputValue<'a, String>> for introspection::InputValue {
   }
 }
 
-impl<'a> Into<Type<'a, String>> for introspection::Type {
-  fn into(self) -> Type<'a, String> {
+impl<'a> Into<schema::Type<'a, String>> for Type {
+  fn into(self) -> schema::Type<'a, String> {
     match self.kind {
-      TypeKind::NonNull => Type::NonNullType(Box::new(self.of_type().clone().into())),
-      TypeKind::List => Type::ListType(Box::new(self.of_type().clone().into())),
-      _ => Type::NamedType(self.name().to_owned()),
+      TypeKind::NonNull => schema::Type::NonNullType(Box::new(self.of_type().clone().into())),
+      TypeKind::List => schema::Type::ListType(Box::new(self.of_type().clone().into())),
+      _ => schema::Type::NamedType(self.name().to_owned()),
     }
   }
 }
 
-impl<'a> Into<EnumValue<'a, String>> for introspection::EnumValue {
-  fn into(self) -> EnumValue<'a, String> {
-    EnumValue {
+impl<'a> Into<schema::EnumValue<'a, String>> for EnumValue {
+  fn into(self) -> schema::EnumValue<'a, String> {
+    schema::EnumValue {
       position: Pos::default(),
       description: self.description,
       name: self.name,

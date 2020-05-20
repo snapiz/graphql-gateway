@@ -92,17 +92,17 @@ where
     M: ObjectType + Send + Sync + 'static,
     S: SubscriptionType + Send + Sync + 'static,
 {
-    fn name(&self) -> String {
-        self.0.to_owned()
+    fn name(&self) -> &str {
+        &self.0
     }
 
-    async fn query(
+    async fn execute(
         &self,
         _ctx: Option<&Data>,
-        query: &str,
-        operation_name: Option<&str>,
+        query: String,
+        operation_name: Option<String>,
         variables: Option<Value>,
-    ) -> graphql_gateway::Result<Value> {
+    ) -> Result<Value, String> {
         let mut builder = QueryBuilder::new(query);
 
         if let Some(operation_name) = operation_name {
@@ -139,7 +139,6 @@ pub async fn gateway<'a>() -> Gateway<'a> {
         EmptySubscription,
     );
     let review = TestExecutor::new("review", review::Query {}, EmptyMutation, EmptySubscription);
-
     Gateway::new()
         .executor(account)
         .executor(inventory)

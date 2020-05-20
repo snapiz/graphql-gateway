@@ -3,7 +3,7 @@ mod common;
 use async_graphql::{EmptyMutation, EmptySubscription};
 use common::{account, inventory, inventory_updated, TestExecutor};
 use futures_await_test::async_test;
-use graphql_gateway::{Error, Executor, QueryBuilder, Response};
+use graphql_gateway::{Executor, GatewayError, QueryBuilder, GraphQLResponse};
 use serde_json::json;
 
 #[async_test]
@@ -23,7 +23,7 @@ async fn poll() {
     );
 
     let gateway = common::gateway().await;
-    let response = serde_json::to_value(Response(query.execute(&gateway).await)).unwrap();
+    let response = serde_json::to_value(GraphQLResponse(query.execute(&gateway).await)).unwrap();
 
     assert_eq!(
         response,
@@ -43,7 +43,7 @@ async fn poll() {
 
     gateway.pull("inventory").await.unwrap();
 
-    let response = serde_json::to_value(Response(query.execute(&gateway).await)).unwrap();
+    let response = serde_json::to_value(GraphQLResponse(query.execute(&gateway).await)).unwrap();
 
     assert_eq!(
         response,
@@ -71,7 +71,7 @@ async fn poll() {
         .to_owned(),
     );
 
-    let response = serde_json::to_value(Response(query.execute(&gateway).await)).unwrap();
+    let response = serde_json::to_value(GraphQLResponse(query.execute(&gateway).await)).unwrap();
 
     assert_eq!(
         response,
@@ -91,7 +91,7 @@ async fn poll() {
 
     gateway.pull("inventory").await.unwrap();
 
-    let response = serde_json::to_value(Response(query.execute(&gateway).await)).unwrap();
+    let response = serde_json::to_value(GraphQLResponse(query.execute(&gateway).await)).unwrap();
 
     assert_eq!(
         response,
@@ -119,7 +119,7 @@ async fn poll() {
         .to_owned(),
     );
 
-    let response = serde_json::to_value(Response(query.execute(&gateway).await)).unwrap();
+    let response = serde_json::to_value(GraphQLResponse(query.execute(&gateway).await)).unwrap();
 
     assert_eq!(
         response,
@@ -140,7 +140,7 @@ async fn validate() {
         EmptySubscription,
     );
 
-    let (name, schema) = inventory_updated.introspection().await.unwrap();
+    let (name, schema) = inventory_updated.introspect().await.unwrap();
     assert_eq!(gateway.validate(name, schema).unwrap(), ());
 }
 
@@ -155,44 +155,38 @@ async fn validate_failed() {
         EmptySubscription,
     );
 
-    let (name, schema) = account.introspection().await.unwrap();
+    let (name, schema) = account.introspect().await.unwrap();
 
     match gateway.validate(name, schema).unwrap_err() {
-        Error::DuplicateObjectFields(fields) => {
+        GatewayError::DuplicateObjectFields(fields) => {
             assert_eq!(
-                fields
-                    .iter()
-                    .any(|f| f.object_type == "Object.Query" && f.field_name == "users"),
+                fields.iter().any(|(_, _, key)| key == "Object.Query.users"),
                 true
             );
             assert_eq!(
                 fields
                     .iter()
-                    .any(|f| f.object_type == "Object.Query" && f.field_name == "viewer"),
+                    .any(|(_, _, key)| key == "Object.Query.viewer"),
+                true
+            );
+            assert_eq!(
+                fields.iter().any(|(_, _, key)| key == "Object.User.email"),
                 true
             );
             assert_eq!(
                 fields
                     .iter()
-                    .any(|f| f.object_type == "Object.User" && f.field_name == "email"),
+                    .any(|(_, _, key)| key == "Object.User.username"),
+                true
+            );
+            assert_eq!(
+                fields.iter().any(|(_, _, key)| key == "Object.User.role"),
                 true
             );
             assert_eq!(
                 fields
                     .iter()
-                    .any(|f| f.object_type == "Object.User" && f.field_name == "username"),
-                true
-            );
-            assert_eq!(
-                fields
-                    .iter()
-                    .any(|f| f.object_type == "Object.User" && f.field_name == "role"),
-                true
-            );
-            assert_eq!(
-                fields
-                    .iter()
-                    .any(|f| f.object_type == "Object.User" && f.field_name == "sayHello"),
+                    .any(|(_, _, key)| key == "Object.User.sayHello"),
                 true
             );
         }

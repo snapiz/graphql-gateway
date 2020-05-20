@@ -1,20 +1,30 @@
+use crate::query::{QueryBuilder, QueryError, QueryResult};
 use serde::ser::{SerializeMap, SerializeSeq};
 use serde::{Serialize, Serializer};
 use serde_json::Value;
 
-use super::error::{Error, Result};
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct Payload {
+#[derive(Serialize, Deserialize)]
+pub struct GraphQLPayload {
     pub query: String,
     #[serde(rename = "operationName")]
     pub operation_name: Option<String>,
     pub variables: Option<Value>,
 }
 
-pub struct Response(pub Result<Value>);
+impl GraphQLPayload {
+    pub fn into_query_builder(&self) -> QueryBuilder {
+        QueryBuilder {
+            query_source: self.query.clone(),
+            operation_name: self.operation_name.clone(),
+            variables: self.variables.clone(),
+            ctx_data: None,
+        }
+    }
+}
 
-impl Serialize for Response {
+pub struct GraphQLResponse(pub QueryResult<Value>);
+
+impl Serialize for GraphQLResponse {
     fn serialize<S: Serializer>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error> {
         match &self.0 {
             Ok(data) => {
@@ -24,7 +34,7 @@ impl Serialize for Response {
                 map.end()
             }
             Err(err) => match err {
-                Error::Executor(value) => {
+                QueryError::Executor(value) => {
                     let mut map = serializer.serialize_map(None)?;
                     if let Value::Object(object) = value {
                         for (k, v) in object {
@@ -45,7 +55,7 @@ impl Serialize for Response {
     }
 }
 
-pub struct GQLError<'a>(pub &'a Error);
+pub struct GQLError<'a>(pub &'a QueryError);
 
 impl<'a> Serialize for GQLError<'a> {
     fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
@@ -53,12 +63,12 @@ impl<'a> Serialize for GQLError<'a> {
         S: Serializer,
     {
         match self.0 {
-            Error::Query(errors) => {
+            QueryError::Errors(errors) => {
                 let mut seq = serializer.serialize_seq(Some(errors.len()))?;
                 for graphql_error in errors {
                     seq.serialize_element(&serde_json::json!({
-                        "message": graphql_error.err.to_string(),
-                        "locations": [{"line": graphql_error.pos.line, "column": graphql_error.pos.column}]
+                        "message": graphql_error.1.to_string(),
+                        "locations": [{"line": graphql_error.0.line, "column": graphql_error.0.column}]
                     }))?;
                 }
                 seq.end()

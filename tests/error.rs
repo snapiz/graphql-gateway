@@ -1,7 +1,7 @@
 mod common;
 
 use futures_await_test::async_test;
-use graphql_gateway::{Error, QueryBuilder, Response};
+use graphql_gateway::{GraphQLResponse, QueryBuilder, QueryError};
 use serde_json::json;
 
 #[async_test]
@@ -19,7 +19,7 @@ async fn error_not_supported() {
     );
 
     let gateway = common::gateway().await;
-    let response = serde_json::to_value(Response(query.execute(&gateway).await)).unwrap();
+    let response = serde_json::to_value(GraphQLResponse(query.execute(&gateway).await)).unwrap();
 
     assert_eq!(
         response,
@@ -45,7 +45,7 @@ async fn error_field_not_found() {
     );
 
     let gateway = common::gateway().await;
-    let response = serde_json::to_value(Response(query.execute(&gateway).await)).unwrap();
+    let response = serde_json::to_value(GraphQLResponse(query.execute(&gateway).await)).unwrap();
 
     assert_eq!(
         response,
@@ -70,7 +70,7 @@ async fn error_unknown_fragment() {
     );
 
     let gateway = common::gateway().await;
-    let response = serde_json::to_value(Response(query.execute(&gateway).await)).unwrap();
+    let response = serde_json::to_value(GraphQLResponse(query.execute(&gateway).await)).unwrap();
 
     assert_eq!(
         response,
@@ -83,7 +83,7 @@ async fn error_unknown_fragment() {
 #[async_test]
 async fn error_executor() {
     let response =
-        serde_json::to_value(Response(Err(Error::Executor(json!({
+        serde_json::to_value(GraphQLResponse(Err(QueryError::Executor(json!({
             "data": null,
             "errors": [{ "message": "Unknown fragment \"ProductDetail\".", "locations": [{ "line": 5, "column": 28 }] }]
         }))))).unwrap();
@@ -93,21 +93,6 @@ async fn error_executor() {
         json!({
             "data": null,
             "errors": [{ "message": "Unknown fragment \"ProductDetail\".", "locations": [{ "line": 5, "column": 28 }] }]
-        })
-    );
-}
-
-#[async_test]
-async fn error_json() {
-    let response = serde_json::to_value(Response(Err(Error::Json(serde::ser::Error::custom(
-        "field missing",
-    )))))
-    .unwrap();
-
-    assert_eq!(
-        response,
-        json!({
-            "errors": [{ "message": "Json error: field missing", "locations": [{ "line": 0, "column": 0 }] }]
         })
     );
 }

@@ -31,6 +31,7 @@ async fn query() {
                 products {
                     id
                     productName: name
+                    inStock
                 }
             }
         "#
@@ -84,11 +85,13 @@ async fn query() {
             "products": [
                 {
                     "id": "UHJvZHVjdDow",
-                    "productName": "Product 1"
+                    "productName": "Product 1",
+                    "inStock": true
                 },
                 {
                     "id": "UHJvZHVjdDox",
-                    "productName": "Product 2"
+                    "productName": "Product 2",
+                    "inStock": false
                 }
             ]
         })
@@ -214,8 +217,10 @@ async fn query_node() {
                     }
                 }
                 nodes(ids: $ids) {
-                    ...on Review {
-                        body
+                    ...on Product {
+                        id
+                        name
+                        inStock
                     }
                 }
             }
@@ -225,7 +230,7 @@ async fn query_node() {
     .operation_name("NodeQuery")
     .variables(json!({
         "id": "UmV2aWV3OjA=",
-        "ids": ["UmV2aWV3OjA=", "UmV2aWV3OjEwMA==", "UmV2aWV3OjE="],
+        "ids": ["UHJvZHVjdDow", "UHJvZHVjdDoxMDA=", "UHJvZHVjdDox"],
         "name": "john"
     }));
 
@@ -247,11 +252,15 @@ async fn query_node() {
             },
             "nodes": [
                 {
-                    "body": "Good product",
+                    "id": "UHJvZHVjdDow",
+                    "name": "Product 1",
+                    "inStock": true,
                 },
                 null,
                 {
-                    "body": "Bad product",
+                    "id": "UHJvZHVjdDox",
+                    "name": "Product 2",
+                    "inStock": false,
                 }
             ]
         })

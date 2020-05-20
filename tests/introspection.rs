@@ -1,7 +1,7 @@
 mod common;
 
 use futures_await_test::async_test;
-use graphql_gateway::{IntrospectionSchema, QueryBuilder, TypeKind};
+use graphql_gateway::{Schema, QueryBuilder, TypeKind};
 use serde_json::{json, Value};
 
 #[async_test]
@@ -29,7 +29,7 @@ async fn introspection() {
 
     assert_eq!(res["__schema"]["subscriptionType"], Value::Null);
 
-    let schema: IntrospectionSchema = serde_json::from_value(res["__schema"].clone()).unwrap();
+    let schema: Schema = serde_json::from_value(res["__schema"].clone()).unwrap();
 
     assert_eq!(
         schema.types.iter().any(|t| t.kind == TypeKind::Object
